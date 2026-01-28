@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"project/node_server/data"
 	"project/node_server/model"
 )
 
@@ -23,6 +24,9 @@ func main() {
 		return
 	}
 	defer listener.Close()
+	data.Connect("test.db") // Open the database
+	defer data.Close()      // Ensure the database is closed on exit and DELETED to change after
+	data.InitTable()        // Initialize the nodes table if not exists
 
 	fmt.Println("Directory Server on port 8080")
 	fmt.Println("\nCommandes disponibles:")
