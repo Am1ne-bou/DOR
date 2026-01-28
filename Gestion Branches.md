@@ -1,4 +1,4 @@
-# Déterminer la banche active
+# Déterminer la branche active
 ```bash
 git br
 ```
@@ -14,4 +14,15 @@ La branche active est selectionnée avec une *
 
 ```bash
 git switch <nom>
+```
+
+Exemple: 
+
+```bash
+git switch exemple
+```
+
+```bash
+* exemple # branche active
+ main 
 ```
