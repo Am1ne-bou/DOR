@@ -2,26 +2,33 @@ package data
 
 import (
 	"database/sql"
+	"fmt"
+	"os"
+
 	"project/node_server/model"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var db *sql.DB = nil
+var Db *sql.DB = nil
 
-func Connect(path string) (*sql.DB, error) {
+func Connect(path string) {
+
+	///fmt.Println(&Db, Db)
+
 	db, err := sql.Open("sqlite3", path)
 
+	Db = db
 	if err != nil {
-		return nil, err
+		fmt.Println(err)
 	}
 
-	defer db.Close()
+	//defer db.Close()
 
-	return db, nil
+	return
 }
 
-func InitTable(db *sql.DB) error {
+func InitTable() error {
 	sqlStmt := `
     CREATE TABLE IF NOT EXISTS nodes (
         id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +37,7 @@ func InitTable(db *sql.DB) error {
 		KEY INTEGER
     );
     `
-	_, err := db.Exec(sqlStmt)
+	_, err := Db.Exec(sqlStmt)
 	if err != nil {
 		return err
 	}
@@ -43,10 +50,17 @@ func AddNode(node *model.Node) error {
 	port := node.Port
 	key := 12345
 
-	_, err := db.Exec("INSERT INTO nodes(name, port, key) VALUES(?, ?, ?)", id, port, key)
+	_, err := Db.Exec("INSERT INTO nodes(name, port, key) VALUES(?, ?, ?)", id, port, key)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func Close() {
+	if Db != nil {
+		Db.Close()
+		os.Remove("test.db")
+	}
 }
