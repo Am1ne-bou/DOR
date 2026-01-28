@@ -1,9 +1,9 @@
 package model
 
 import (
-	"net"
 	"bufio"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -11,6 +11,7 @@ import (
 type Node struct {
 	ID       string
 	Port     int
+	Key      int
 	Listener net.Listener
 }
 
@@ -26,6 +27,27 @@ func (n *Node) StartNode() {
 	}
 
 }
+
+// ///
+func (n *Node) GetNodesList() (string, error) {
+	conn, err := net.Dial("tcp", "localhost:8080")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	conn.Write([]byte("GET_LIST\n"))
+
+	reader := bufio.NewReader(conn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(response), nil
+}
+
+////
 
 func (n *Node) handlerroutine(conn net.Conn) {
 	defer conn.Close()

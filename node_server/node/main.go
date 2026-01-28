@@ -114,6 +114,17 @@ func main() {
 			if err != nil {
 				fmt.Println("Erreur:", err)
 			}
+
+		////
+		case "LIST":
+			list, err := node.GetNodesList()
+			if err != nil {
+				fmt.Println("Error:", err)
+			} else {
+				fmt.Println(list)
+			}
+		/////
+
 		case "QUIT":
 			fmt.Println("Shutting down node...")
 			node.Stop()
