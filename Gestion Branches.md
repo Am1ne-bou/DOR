@@ -1,6 +1,6 @@
 # Déterminer la branche active
 ```bash
-git br
+git branch
 ```
 
 La branche active est selectionnée avec une *
