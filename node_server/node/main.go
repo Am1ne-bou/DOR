@@ -7,13 +7,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
 	"project/node_server/model"
 )
 
 func NewNode(id string, port int) (*model.Node, error) {
 	addr := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", addr)
+	//TODO : générer clé privée ici
+	//TODO : en déduire clé publique ici et la stoquer dans le struct Node
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +90,7 @@ func main() {
 				continue
 			}
 			data = subParts[1]
+			//TODO : chiffrement du message ici avant envoi via clé publique du dst
 			err = node.SendTo(dst, "MSG:"+data)
 			if err != nil {
 				fmt.Println("Error sending message:", err)
@@ -136,6 +138,7 @@ func main() {
 }
 
 func buildRelayChain(data string) string {
+	//TODO : plus besoin de cette fonction comme dit sur whatsapp
 	parts := strings.SplitN(data, ":", 2)
 
 	if len(parts) < 2 {
@@ -143,7 +146,7 @@ func buildRelayChain(data string) string {
 		return "MSG:" + data
 	}
 
-	//Test if parts[0] is a port number
+	//Test if parts[0] is a port number (Commentaire : moyen qui peut être amélioré, là on vérifie juste que c'est un nombre)
 	_, err := strconv.Atoi(parts[0])
 	if err != nil {
 		// Not a port, it's a message

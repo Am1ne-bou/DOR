@@ -53,6 +53,7 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
+	// TODO : déchiffrer message avec clé privée ici
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return
