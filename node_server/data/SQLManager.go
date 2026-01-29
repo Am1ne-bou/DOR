@@ -2,7 +2,6 @@ package data
 
 import (
 	"database/sql"
-	"fmt"
 	"os"
 
 	"project/node_server/model"
@@ -12,20 +11,16 @@ import (
 
 var Db *sql.DB = nil
 
-func Connect(path string) {
-
-	///fmt.Println(&Db, Db)
+func Connect(path string) error {
 
 	db, err := sql.Open("sqlite3", path)
 
 	Db = db
 	if err != nil {
-		fmt.Println(err)
+		return err
 	}
 
-	//defer db.Close()
-
-	return
+	return nil
 }
 
 func InitTable() error {
@@ -48,9 +43,50 @@ func InitTable() error {
 func AddNode(node *model.Node) error {
 	id := node.ID
 	port := node.Port
-	key := 12345
+	key := node.Key
 
 	_, err := Db.Exec("INSERT INTO nodes(name, port, key) VALUES(?, ?, ?)", id, port, key)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GetNodesList() ([]model.Node, error) {
+
+	var nodes []model.Node
+
+	rows, err := Db.Query("SELECT name, port, key FROM nodes")
+	if err != nil {
+		return []model.Node{}, err
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var port int
+		var key int
+		err = rows.Scan(&name, &port, &key)
+
+		if err != nil {
+			return []model.Node{}, err
+		}
+
+		nodes = append(nodes, model.Node{ID: name, Port: port, Key: key})
+	}
+
+	if err = rows.Err(); err != nil {
+		return []model.Node{}, err
+	}
+
+	return nodes, nil
+}
+
+func RemoveNode(nodeID string) error {
+
+	_, err := Db.Exec("DELETE FROM nodes WHERE name = ?", nodeID)
 	if err != nil {
 		return err
 	}

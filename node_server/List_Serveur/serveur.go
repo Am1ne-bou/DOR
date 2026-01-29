@@ -109,6 +109,15 @@ func handleConnection(conn net.Conn) {
 		count := nbrNodes
 		mu.Unlock()
 
+		// Ajout dans BDD
+		data.AddNode(&info)
+
+		// Lecture des noeuds dans bdd
+		nodesSQL, _ := data.GetNodesList()
+		for _, node := range nodesSQL {
+			fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
+		}
+
 		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", id, port, count)
 		conn.Write([]byte("INIT_ACK:" + id + "\n"))
 
@@ -121,6 +130,14 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 		id := parts[1]
+
+		data.RemoveNode(id)
+
+		// Lecture des noeuds dans bdd
+		nodesSQL, _ := data.GetNodesList()
+		for _, node := range nodesSQL {
+			fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
+		}
 
 		mu.Lock()
 		for conn, info := range nodes {
@@ -138,7 +155,6 @@ func handleConnection(conn net.Conn) {
 		conn.Write([]byte("ERROR:Unknown command\n"))
 		return
 	}
-
 }
 
 func getNodesList() string {
