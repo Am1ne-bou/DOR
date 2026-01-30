@@ -19,7 +19,7 @@ Arguments:
 ```go
 func InitTable() error
 ```
-'nodes' table will be crated only if doesn't exist. 
+'nodes' table will be created only if doesn't exist. 
 Table content:
 - id, Integer autoincrement primary key
 - name, Text
