@@ -12,7 +12,7 @@ func Connect(path string) error
 Establishes connection using a *sql.DB object.
 
 Arguments:
-    - path (string), path of .db file. If not exists, it will be created. 
+- path (string), path of .db file. If not exists, it will be created. 
 
 # Initialize the main table for node storage
 
@@ -21,13 +21,13 @@ func InitTable() error
 ```
 'nodes' table will be crated only if doesn't exist. 
 Table content:
-    - id, Integer autoincrement primary key
-    - name, Text
-    - port, Integer
-    - key, Integer public key
+- id, Integer autoincrement primary key
+- name, Text
+- port, Integer
+- key, Integer public key
 
 Arguments:
-    - None
+- None
 
 # Add a node into the 'nodes'
 
@@ -37,7 +37,7 @@ func AddNode(node *model.Node) error
 Adds a model.Node object into 'nodes'.
 
 Arguments:
-    - node (*model.Node)
+- node (*model.Node)
 
 # Remove a node into the 'nodes'
 
@@ -47,7 +47,7 @@ func RemoveNode(nodeID string) error
 Removes a model.Node object from 'nodes' using UUID.
 
 Arguments:
-    - nodeID (string)
+- nodeID (string)
 
 # Get all nodes stored inside 'nodes'
 
@@ -57,7 +57,7 @@ func GetNodesList() ([]model.Node, error)
 Returns []model.Node with all data.
 
 Arguments:
-    - None
+- None
 
 # Close the connection
 
@@ -67,4 +67,4 @@ func Close()
 Closes the connection to the data base.
 
 Arguments:
-    - None
+- None
