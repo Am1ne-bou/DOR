@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"project/node_server/model"
 	"strconv"
 	"strings"
-	"project/node_server/model"
 )
 
 func NewNode(id string, port int) (*model.Node, error) {
@@ -22,6 +22,7 @@ func NewNode(id string, port int) (*model.Node, error) {
 	return &model.Node{
 		ID:       id,
 		Port:     port,
+		Key:      0,
 		Listener: listener,
 	}, nil
 
@@ -62,7 +63,8 @@ func main() {
 	fmt.Println("\nCommandes disponibles:")
 	fmt.Println("  MSG:<port>:<message>              - Message direct")
 	fmt.Println("  RELAY:<port>:<port>:...:<message> - Relai multi-hop")
-	fmt.Println("  QUIT                              - Quitter")
+	fmt.Println("  QUIT:                             - Quitter")
+	fmt.Println("  LIST:                             - Afficher la liste des noeuds enregistrés")
 	fmt.Println()
 
 	for scanner.Scan() {

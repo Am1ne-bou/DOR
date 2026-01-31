@@ -2,7 +2,7 @@ package data
 
 import (
 	"database/sql"
-	"os"
+	//"os"
 
 	"project/node_server/model"
 
@@ -94,9 +94,15 @@ func RemoveNode(nodeID string) error {
 	return nil
 }
 
+func ClearTable() error {
+	Db.Exec("DELETE FROM nodes")
+	_, err := Db.Exec("DELETE FROM sqlite_sequence WHERE name='nodes'")
+	return err
+}
+
 func Close() {
 	if Db != nil {
 		Db.Close()
-		os.Remove("test.db")
+		//os.Remove("test.db")
 	}
 }

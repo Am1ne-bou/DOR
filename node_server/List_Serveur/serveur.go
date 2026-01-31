@@ -7,15 +7,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	"project/node_server/data"
 	"project/node_server/model"
 )
 
-var mu sync.Mutex
-var nodes = make(map[net.Conn]model.Node)
-var nbrNodes int = 0
+//var mu sync.Mutex
+//var nodes = make(map[net.Conn]model.Node)
+//var nbrNodes int = 0
 
 func main() {
 	listener, err := net.Listen("tcp", ":8080")
@@ -24,9 +23,12 @@ func main() {
 		return
 	}
 	defer listener.Close()
+
+	// Initialize the database
 	data.Connect("test.db") // Open the database
 	defer data.Close()      // Ensure the database is closed on exit and DELETED to change after
 	data.InitTable()        // Initialize the nodes table if not exists
+	data.ClearTable()       // Clear existing nodes on startup
 
 	fmt.Println("Directory Server on port 8080")
 	fmt.Println("\nCommandes disponibles:")
@@ -103,12 +105,6 @@ func handleConnection(conn net.Conn) {
 			Listener: nil,
 		}
 
-		mu.Lock()
-		nodes[conn] = info
-		nbrNodes++
-		count := nbrNodes
-		mu.Unlock()
-
 		// Ajout dans BDD
 		data.AddNode(&info)
 
@@ -118,7 +114,7 @@ func handleConnection(conn net.Conn) {
 			fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
 		}
 
-		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", id, port, count)
+		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", id, port, len(nodesSQL))
 		conn.Write([]byte("INIT_ACK:" + id + "\n"))
 
 	case "GET_LIST":
@@ -134,20 +130,10 @@ func handleConnection(conn net.Conn) {
 		data.RemoveNode(id)
 
 		// Lecture des noeuds dans bdd
-		nodesSQL, _ := data.GetNodesList()
-		for _, node := range nodesSQL {
-			fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
-		}
-
-		mu.Lock()
-		for conn, info := range nodes {
-			if info.ID == id {
-				delete(nodes, conn)
-				nbrNodes--
-				break
-			}
-		}
-		mu.Unlock()
+		//nodesSQL, _ := data.GetNodesList()
+		//for _, node := range nodesSQL {
+		//	fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
+		//}
 
 		fmt.Printf("[-] Node %s unregistered\n", id)
 
@@ -158,24 +144,20 @@ func handleConnection(conn net.Conn) {
 }
 
 func getNodesList() string {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if nbrNodes == 0 {
+	// Utiliser data.GetNodesList() à la place
+	nodes, err := data.GetNodesList()
+	if err != nil || len(nodes) == 0 {
 		return "LIST:empty\n"
 	}
 
 	var result strings.Builder
 	result.WriteString("LIST:")
 
-	first := true
-	for _, info := range nodes {
-		if !first {
+	for i, info := range nodes {
+		if i > 0 {
 			result.WriteString(",")
 		}
-		// Format: id|port|key
 		result.WriteString(fmt.Sprintf("%s|%d|%d", info.ID, info.Port, info.Key))
-		first = false
 	}
 	result.WriteString("\n")
 
@@ -183,16 +165,19 @@ func getNodesList() string {
 }
 
 func showNodes() {
-	mu.Lock()
-	defer mu.Unlock()
+	nodes, err := data.GetNodesList()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
 
 	fmt.Println("\n=== Noeuds connectés ===")
-	if nbrNodes == 0 {
+	if len(nodes) == 0 {
 		fmt.Println("  (aucun)")
 	} else {
 		for _, info := range nodes {
 			fmt.Printf("  . %s - Port: %d, Key: %d\n", info.ID, info.Port, info.Key)
 		}
 	}
-	fmt.Printf("Total: %d\n\n", nbrNodes)
+	fmt.Printf("Total: %d\n\n", len(nodes))
 }
