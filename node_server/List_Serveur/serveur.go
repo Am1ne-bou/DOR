@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"project/node_server/data"
 	"project/node_server/model"
@@ -38,7 +39,7 @@ func main() {
 
 	// Listen for incoming connections
 	go acceptConnections(listener)
-
+	go TestPing()
 	// Command from stdin
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -180,4 +181,27 @@ func showNodes() {
 		}
 	}
 	fmt.Printf("Total: %d\n\n", len(nodes))
+}
+
+func TestPing() {
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
+
+    for range ticker.C {
+        nodes, err := data.GetNodesList()
+        if err != nil {
+            continue
+        }
+
+        for _, node := range nodes {
+            addr := fmt.Sprintf("localhost:%d", node.Port)
+            conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+            if err != nil {
+                data.RemoveNode(node.ID)
+                fmt.Printf("Node %s removed\n", node.ID)
+            } else {
+                conn.Close()
+            }
+        }
+    }
 }
