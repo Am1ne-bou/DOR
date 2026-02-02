@@ -6,12 +6,18 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n)
+	"crypto/x509"
 )
 
 type Node struct {
 	ID       string
 	Port     int
-	Key      int
+	PrivateKey *rsa.PrivateKey
+    PublicKey  *rsa.PublicKey
 	Listener net.Listener
 }
 
@@ -53,14 +59,32 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	// TODO : déchiffrer message avec clé privée ici
-	line, err := reader.ReadString('\n')
-	if err != nil {
+	line, _ := reader.ReadString('\n')
+
+	line = strings.TrimSpace(line)
+	if line == "GET_PUBKEY" {
+		pubBytes, _ := x509.MarshalPKIXPublicKey(n.PublicKey)
+		pubBase64 := base64.StdEncoding.EncodeToString(pubBytes)
+		conn.Write([]byte(pubBase64 + "\n"))
 		return
 	}
 
-	line = strings.TrimSpace(line)
-	parts := strings.SplitN(line, ":", 2)
+
+	//on doit s'abord décoder la base 64 avant de déchiffrer le message
+    encryptedData, err := base64.StdEncoding.DecodeString(strings.TrimSpace(line));
+    if err != nil {
+        return;
+    }
+
+
+	decrypted, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, n.PrivateKey, encryptedData, nil)
+	if err != nil {
+		fmt.Printf("Erreur de déchiffrement (mauvaise clé de dechiffrement ou corruption du message ?)\n");
+		return;
+	}
+
+	line_decrypted := string(decrypted)
+	parts := strings.SplitN(line_decrypted, ":", 2)
 
 	if len(parts) < 2 {
 		return
@@ -135,15 +159,26 @@ func (n *Node) Stop() {
 
 }
 
-func (n *Node) JoinServerList(addrlist string, key int) error {
+func (n *Node) JoinServerList(addrlist string) error {
 	conn, err := net.Dial("tcp", addrlist)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
+	//Pr envoyer la clé publique sur le réseau (format "reconnu" partout)
+	// on utilise le format PKIX (encodage en ASN.1 DER).
+	//on appelle cette etape la serialisation
+	pubBytes, err := x509.MarshalPKIXPublicKey(n.PublicKey)
+    if err != nil {
+        return fmt.Errorf("erreur sérialisation clé: %v", err);
+    }
+
+	//ensuite on utilise la base 64 et pas le binaire pour le pb des \n
+	pubBase64 := base64.StdEncoding.EncodeToString(pubBytes);
+
 	// Send: INIT:id:port:key
-	msg := fmt.Sprintf("INIT:%s:%d:%d\n", n.ID, n.Port, key)
+	msg := fmt.Sprintf("INIT:%s:%d:%s\n", n.ID, n.Port, pubBase64)	
 	_, err = conn.Write([]byte(msg))
 	if err != nil {
 		return err
