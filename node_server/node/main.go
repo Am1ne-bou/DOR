@@ -11,14 +11,15 @@ import (
 	"crypto/rand"
     "crypto/rsa"
     "crypto/sha256"
-    "encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n)
+    "encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n), idem pour ":"
 	"crypto/x509"
+	"io"
 )
 
 func NewNode(id string, port int) (*model.Node, error) {
 
-	// Génération d'une clé privée RSA 16384 bits
-	privateKey, err := rsa.GenerateKey(rand.Reader, 10000)
+	// Génération d'une clé privée RSA 2048 bits
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
     if err != nil {
         return nil, err;
     }
@@ -37,14 +38,14 @@ func NewNode(id string, port int) (*model.Node, error) {
 		ID:       id,
 		Port:     port,
 		PrivateKey: privateKey,
-        PublicKey:  &publicKey,
+        PublicKey: &publicKey,
 		Listener: listener,
 	}, nil
 
 }
 
 func main() {
-	// Annuaire local qui a partir d'1 port donne la clé publique (partie qui sera dans le serveur plus tard)
+	// Annuaire local qui a partir d'1 port donne la clé publique (partie qui sera rempli grâce au serveur plus tard)
 	publicKeys := make(map[int]*rsa.PublicKey);
 
 	if len(os.Args) < 3 {
@@ -91,6 +92,7 @@ func main() {
 
 		case "FETCH":
 			// Format: FETCH:<port>
+			// Plus tard on demandera au serveur cette info
 			targetPort, err := strconv.Atoi(data);
 			if err != nil {
 				fmt.Println("Port invalide");
@@ -113,9 +115,8 @@ func main() {
 			pubBase64, _ := reader.ReadString('\n');
 			conn.Close();
 
-			//on décode la clé qui est en base 64 et encode en x509
-			pubBytes,_ := base64.StdEncoding.DecodeString(strings.TrimSpace(pubBase64));
-			pubKeyInterface, err := x509.ParsePKIXPublicKey(pubBytes);
+			pubBytes,_ := base64.StdEncoding.DecodeString(strings.TrimSpace(pubBase64)); //on décode le sérial de la clé qui est en base 64
+			pubKeyInterface, err := x509.ParsePKIXPublicKey(pubBytes); //on décode le sérial en x509 pour retrouver la clé RSA
 			if err != nil {
 				fmt.Println("Erreur decodage clé:", err);
 				continue;
@@ -143,22 +144,23 @@ func main() {
 			}
 			data = subParts[1]
 
-			onion, err := AL1(data, []int{dst}, publicKeys)
+			onion, err := Encapsulator_func(data, []int{dst}, publicKeys)
 			if err != nil {
-				fmt.Println("Erreur AL1:", err)
+				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
 			}
 
-			//TODO : chiffrement du message ici avant envoi via clé publique du dst
 			err = node.SendTo(dst, onion)
 			if err != nil {
 				fmt.Println("Error sending message:", err)
 			}
 		case "RELAY":
 			// Format of data : RELAY:<port1>:<port2>:...:<message>
-			// Build the relay chain
-
-			//On récup qui qu'il y a après le dernier : càd le msg (supposons que le message n'a pas de :)
+			//On récup qui qu'il y a après le dernier : càd le msg
+			//Tel qu'il est implémenté, si le message contient :, ça ne marche pas
+			//(il faudrait parcourir tout les bouts et vérif si c'est un num de port possible
+			//ou non et ensuite reconstruire le message en fonction... flemme pour l'instant)
+			
 			lastColon :=strings.LastIndex(data, ":");
     		if lastColon == -1 {
 				continue
@@ -174,9 +176,9 @@ func main() {
 				route = append(route, p);
 			}
 
-			onion, err := AL1(message, route, publicKeys)
+			onion, err := Encapsulator_func(message, route, publicKeys)
 			if err != nil {
-				fmt.Println("Erreur AL1:", err)
+				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
 			}
 
@@ -184,26 +186,6 @@ func main() {
 			if err != nil {
 			fmt.Println("Erreur:", err)
 			}
-
-			//ancien code :
-			// subParts := strings.SplitN(data, ":", 2)
-			// if len(subParts) < 2 {
-			// 	fmt.Println("Format: RELAY:<port>:<port>:...:<message>")
-			// 	continue
-			// }
-			// firstPort, err := strconv.Atoi(subParts[0])
-			// if err != nil {
-			// 	fmt.Println("Port invalide")
-			// 	continue
-			// }
-			// rest := subParts[1]
-
-			// // Build the relay chain message
-			// msgToSend := buildRelayChain(rest)
-			// err = node.SendTo(firstPort, msgToSend)
-			// if err != nil {
-			// 	fmt.Println("Erreur:", err)
-			// }
 
 		////
 		case "LIST":
@@ -225,30 +207,7 @@ func main() {
 	}
 }
 
-func buildRelayChain(data string) string {
-	//TODO : plus besoin de cette fonction comme dit sur whatsapp
-	parts := strings.SplitN(data, ":", 2)
-
-	if len(parts) < 2 {
-		// No more ports, just a message
-		return "MSG:" + data
-	}
-
-	//Test if parts[0] is a port number (Commentaire : moyen qui peut être amélioré, là on vérifie juste que c'est un nombre)
-	_, err := strconv.Atoi(parts[0])
-	if err != nil {
-		// Not a port, it's a message
-		return "MSG:" + data
-	}
-
-	//is a port
-	port := parts[0]
-	rest := parts[1]
-
-	return "RELAY:" + port + ":" + buildRelayChain(rest)
-}
-
-func AL1(message string, route []int, publicKeys map[int]*rsa.PublicKey) (string, error) {
+func Encapsulator_func(message string, route []int, publicKeys map[int]*rsa.PublicKey) (string, error) {
 
     currentPayload := "MSG:" + message; //encapsulation du mess final
 
@@ -259,13 +218,25 @@ func AL1(message string, route []int, publicKeys map[int]*rsa.PublicKey) (string
             return "", fmt.Errorf("clé publique manquante pour le port %d", targetPort);
         }
 
-		//chiffrement :
-        encryptedBytes,err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, []byte(currentPayload), nil);
-        if err != nil {
-            return "", err;
-        }
+		//chiffrement "duo" (AES puis RSA):
 
-        encoded := base64.StdEncoding.EncodeToString(encryptedBytes);
+		//Géneration clé AES aléatoire (32 octet)
+		aesKey := make([]byte, 32);
+		io.ReadFull(rand.Reader, aesKey);
+
+		//chiffrement du mess en clair (payload) avec AES : 
+		encPayload, _ := model.EncryptAES(aesKey, []byte(currentPayload));
+
+		//chiffrement de la clé AES avec RSA:
+		encKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, aesKey, nil);
+		if err != nil {
+			return "", err;
+		}
+
+		// Format fusion : base64(clé_AES_chiffrée_via_RSA):base64(payload_chiffre_via_AES)
+		encodedKey := base64.StdEncoding.EncodeToString(encKey);
+		encodedPayload := base64.StdEncoding.EncodeToString(encPayload);
+		encoded := encodedKey + ":" + encodedPayload;
 
         if i > 0 { //si ce n'est pas le premier saut, il faut mettre un "header" (RELAY:PORT:msg_encrypted)
             currentPayload = fmt.Sprintf("RELAY:%d:%s", targetPort, encoded);
