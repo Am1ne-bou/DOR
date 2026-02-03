@@ -97,13 +97,12 @@ func handleConnection(conn net.Conn) {
 
 		id := parts[1]
 		port, _ := strconv.Atoi(parts[2])
-		key, _ := strconv.Atoi(parts[3])
+		key := parts[3]
 
-		info := model.Node{
-			ID:       id,
-			Port:     port,
-			Key:      key,
-			Listener: nil,
+		info := model.NodeInfo{
+			ID:   id,
+			Port: port,
+			Key:  key,
 		}
 
 		// Ajout dans BDD
@@ -112,7 +111,7 @@ func handleConnection(conn net.Conn) {
 		// Lecture des noeuds dans bdd
 		nodesSQL, _ := data.GetNodesList()
 		for _, node := range nodesSQL {
-			fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
+			fmt.Printf("%s : %d : %s\n", node.ID, node.Port, node.Key)
 		}
 
 		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", id, port, len(nodesSQL))
@@ -158,7 +157,7 @@ func getNodesList() string {
 		if i > 0 {
 			result.WriteString(",")
 		}
-		result.WriteString(fmt.Sprintf("%s|%d|%d", info.ID, info.Port, info.Key))
+		result.WriteString(fmt.Sprintf("%s|%d|%s", info.ID, info.Port, info.Key))
 	}
 	result.WriteString("\n")
 
@@ -177,31 +176,31 @@ func showNodes() {
 		fmt.Println("  (aucun)")
 	} else {
 		for _, info := range nodes {
-			fmt.Printf("  . %s - Port: %d, Key: %d\n", info.ID, info.Port, info.Key)
+			fmt.Printf("  . %s - Port: %d, Key: %s\n", info.ID, info.Port, info.Key)
 		}
 	}
 	fmt.Printf("Total: %d\n\n", len(nodes))
 }
 
 func TestPing() {
-    ticker := time.NewTicker(10 * time.Second)
-    defer ticker.Stop()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-    for range ticker.C {
-        nodes, err := data.GetNodesList()
-        if err != nil {
-            continue
-        }
+	for range ticker.C {
+		nodes, err := data.GetNodesList()
+		if err != nil {
+			continue
+		}
 
-        for _, node := range nodes {
-            addr := fmt.Sprintf("localhost:%d", node.Port)
-            conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-            if err != nil {
-                data.RemoveNode(node.ID)
-                fmt.Printf("Node %s removed\n", node.ID)
-            } else {
-                conn.Close()
-            }
-        }
-    }
+		for _, node := range nodes {
+			addr := fmt.Sprintf("localhost:%d", node.Port)
+			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+			if err != nil {
+				data.RemoveNode(node.ID)
+				fmt.Printf("Node %s removed\n", node.ID)
+			} else {
+				conn.Close()
+			}
+		}
+	}
 }

@@ -2,74 +2,74 @@ package model
 
 import (
 	"bufio"
-	"fmt"
-	"net"
-	"strconv"
-	"strings"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n, idem pour ":")
 	"crypto/x509"
-	"crypto/aes"
-	"crypto/cipher"
+	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n, idem pour ":")
+	"fmt"
 	"io"
+	"net"
+	"strconv"
+	"strings"
 )
 
 type Node struct {
-	ID       string
-	Port     int
+	ID         string
+	Port       int
 	PrivateKey *rsa.PrivateKey
-    PublicKey  *rsa.PublicKey
-	Listener net.Listener
+	PublicKey  *rsa.PublicKey
+	Listener   net.Listener
 }
 
-//fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
+// fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
 func EncryptAES(key []byte, plaintext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key);
+	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err;
+		return nil, err
 	}
 
-	aesgcm, err := cipher.NewGCM(block);
+	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err;
+		return nil, err
 	}
 
-	nonce := make([]byte, aesgcm.NonceSize());
+	nonce := make([]byte, aesgcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err;
+		return nil, err
 	}
 
 	//pour info : https://pkg.go.dev/crypto/cipher#pkg-types
-	ciphertext := aesgcm.Seal(nonce, nonce, plaintext, nil);
+	ciphertext := aesgcm.Seal(nonce, nonce, plaintext, nil)
 	//notre ciphertext est la concaténation de : [ le nonce (K octets) ] + [ msg chiffré ] + [ tag (une sorte de checksum pr l'intégrité)].
-	return ciphertext, nil;
+	return ciphertext, nil
 }
 
-//fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
+// fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
 func DecryptAES(key []byte, ciphertext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key);
+	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err;
+		return nil, err
 	}
 
-	aesgcm, err := cipher.NewGCM(block);
+	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err;
+		return nil, err
 	}
 
-	nonceSize := aesgcm.NonceSize(); //on recup la taille du nonce
+	nonceSize := aesgcm.NonceSize() //on recup la taille du nonce
 
-	nonce := ciphertext[:nonceSize]; //pour ensuite pouvoir séparer nonce et message
-	Ciphertext_real := ciphertext[nonceSize:];
+	nonce := ciphertext[:nonceSize] //pour ensuite pouvoir séparer nonce et message
+	Ciphertext_real := ciphertext[nonceSize:]
 
 	//déchiffrement (et vérif d'intégrité d'ailleur aussi grâce au tag)
 	plaintext, err := aesgcm.Open(nil, nonce, Ciphertext_real, nil)
 	if err != nil {
-		return nil, err;
+		return nil, err
 	}
-	return plaintext, err;
+	return plaintext, err
 }
 
 func (n *Node) StartNode() {
@@ -128,23 +128,23 @@ func (n *Node) handlerroutine(conn net.Conn) {
 
 	// Déchiffrement RSA (pour récup la clé AES) :
 	//on doit s'abord décoder la base 64 avant de déchiffrer le message via RSA :
-	encKey, err := base64.StdEncoding.DecodeString(partsAES[0]);
+	encKey, err := base64.StdEncoding.DecodeString(partsAES[0])
 	if err != nil {
-        return;
-    }
+		return
+	}
 
-	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, n.PrivateKey, encKey, nil);
+	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, n.PrivateKey, encKey, nil)
 	if err != nil {
-		fmt.Println("Erreur déchiffrement RSA (Clé AES)");
-		return;
+		fmt.Println("Erreur déchiffrement RSA (Clé AES)")
+		return
 	}
 
 	//déchiffrement AES (pour récup le le payload en clair)
 	//on doit s'abord décoder la base 64 avant de déchiffrer le message via AES :
-	encPayload, err := base64.StdEncoding.DecodeString(partsAES[1]);
+	encPayload, err := base64.StdEncoding.DecodeString(partsAES[1])
 	if err != nil {
-        return;
-    }
+		return
+	}
 
 	decrypted, err := DecryptAES(aesKey, encPayload)
 	if err != nil {
@@ -239,15 +239,15 @@ func (n *Node) JoinServerList(addrlist string) error {
 	// on utilise le format PKIX (encodage en ASN.1 DER).
 	//on appelle cette etape la serialisation
 	pubBytes, err := x509.MarshalPKIXPublicKey(n.PublicKey)
-    if err != nil {
-        return fmt.Errorf("erreur sérialisation clé: %v", err);
-    }
+	if err != nil {
+		return fmt.Errorf("erreur sérialisation clé: %v", err)
+	}
 
 	//ensuite on utilise la base 64 et pas le binaire pour le pb des \n
-	pubBase64 := base64.StdEncoding.EncodeToString(pubBytes);
+	pubBase64 := base64.StdEncoding.EncodeToString(pubBytes)
 
 	// Send: INIT:id:port:key
-	msg := fmt.Sprintf("INIT:%s:%d:%s\n", n.ID, n.Port, pubBase64)	
+	msg := fmt.Sprintf("INIT:%s:%d:%s\n", n.ID, n.Port, pubBase64)
 	_, err = conn.Write([]byte(msg))
 	if err != nil {
 		return err
