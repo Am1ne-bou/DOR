@@ -1,8 +1,9 @@
 package model
 
 type NodeInfo struct {
-	ID   string
-	Port int
-	Key  string
-	//Listener net.Listener
+	Uuid      string
+	Name      string
+	Ip        string
+	Port      int
+	PublicKey string
 }

@@ -27,7 +27,7 @@ func NewNode(id string, port int) (*model.Node, error) {
 	// Générer une clé public à partir de la clé privée
 	publicKey := privateKey.PublicKey
 
-	addr := fmt.Sprintf(":%d", port)
+	addr := fmt.Sprintf(":%d", 0)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func NewNode(id string, port int) (*model.Node, error) {
 
 	return &model.Node{
 		ID:         id,
-		Port:       port,
+		Port:       listener.Addr().(*net.TCPAddr).Port,
 		PrivateKey: privateKey,
 		PublicKey:  &publicKey,
 		Listener:   listener,

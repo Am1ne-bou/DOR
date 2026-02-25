@@ -11,6 +11,8 @@ import (
 
 	"project/node_server/data"
 	"project/node_server/model"
+
+	"github.com/google/uuid"
 )
 
 //var mu sync.Mutex
@@ -95,14 +97,16 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		id := parts[1]
+		name := parts[1]
 		port, _ := strconv.Atoi(parts[2])
 		key := parts[3]
 
 		info := model.NodeInfo{
-			ID:   id,
-			Port: port,
-			Key:  key,
+			Uuid:      uuid.New().String(),
+			Name:      name,
+			Ip:        conn.RemoteAddr().String(),
+			Port:      port,
+			PublicKey: key,
 		}
 
 		// Ajout dans BDD
@@ -111,11 +115,11 @@ func handleConnection(conn net.Conn) {
 		// Lecture des noeuds dans bdd
 		nodesSQL, _ := data.GetNodesList()
 		for _, node := range nodesSQL {
-			fmt.Printf("%s : %d : %s\n", node.ID, node.Port, node.Key)
+			fmt.Printf("%s : %d : %s\n", node.Name, node.Port, node.PublicKey)
 		}
 
-		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", id, port, len(nodesSQL))
-		conn.Write([]byte("INIT_ACK:" + id + "\n"))
+		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", name, port, len(nodesSQL))
+		conn.Write([]byte("INIT_ACK:" + name + "\n"))
 
 	case "GET_LIST":
 		conn.Write([]byte(getNodesList()))
@@ -157,7 +161,7 @@ func getNodesList() string {
 		if i > 0 {
 			result.WriteString(",")
 		}
-		result.WriteString(fmt.Sprintf("%s|%d|%s", info.ID, info.Port, info.Key))
+		result.WriteString(fmt.Sprintf("%s|%d|%s", info.Name, info.Port, info.PublicKey))
 	}
 	result.WriteString("\n")
 
@@ -176,7 +180,7 @@ func showNodes() {
 		fmt.Println("  (aucun)")
 	} else {
 		for _, info := range nodes {
-			fmt.Printf("  . %s - Port: %d, Key: %s\n", info.ID, info.Port, info.Key)
+			fmt.Printf("  . %s - Port: %d, Key: %s\n", info.Name, info.Port, info.PublicKey)
 		}
 	}
 	fmt.Printf("Total: %d\n\n", len(nodes))
@@ -196,8 +200,8 @@ func TestPing() {
 			addr := fmt.Sprintf("localhost:%d", node.Port)
 			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 			if err != nil {
-				data.RemoveNode(node.ID)
-				fmt.Printf("Node %s removed\n", node.ID)
+				data.RemoveNode(node.Name)
+				fmt.Printf("Node %s removed\n", node.Name)
 			} else {
 				conn.Close()
 			}

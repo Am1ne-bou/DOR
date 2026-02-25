@@ -27,9 +27,11 @@ func InitTable() error {
 	sqlStmt := `
     CREATE TABLE IF NOT EXISTS nodes (
         id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		uuid TEXT,
         name TEXT,
-		port INTEGER,
-		KEY TEXT
+		ip INTEGER,
+		port TEXT,
+		publicKey TEXT
     );
     `
 	_, err := Db.Exec(sqlStmt)
@@ -38,11 +40,13 @@ func InitTable() error {
 }
 
 func AddNode(node *model.NodeInfo) error {
-	id := node.ID
+	uuid := node.Uuid
+	name := node.Name
+	ip := node.Ip
 	port := node.Port
-	key := node.Key
+	key := node.PublicKey
 
-	_, err := Db.Exec("INSERT INTO nodes(name, port, key) VALUES(?, ?, ?)", id, port, key)
+	_, err := Db.Exec("INSERT INTO nodes(uuid, name, ip, port, publicKey) VALUES(?, ?, ?, ?, ?)", uuid, name, ip, port, key)
 	if err != nil {
 		return err
 	}
@@ -71,7 +75,7 @@ func GetNodesList() ([]model.NodeInfo, error) {
 			return []model.NodeInfo{}, err
 		}
 
-		nodes = append(nodes, model.NodeInfo{ID: name, Port: port, Key: key})
+		nodes = append(nodes, model.NodeInfo{Name: name, Port: port, PublicKey: key})
 	}
 
 	if err = rows.Err(); err != nil {
