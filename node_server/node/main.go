@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-func NewNode(id string, port int) (*model.Node, error) {
+func NewNode(id string) (*model.Node, error) {
 
 	// Génération d'une clé privée RSA 2048 bits
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -43,24 +43,52 @@ func NewNode(id string, port int) (*model.Node, error) {
 
 }
 
+func FetchKeyFromServer(port int) (*rsa.PublicKey, error) {
+	conn, err := net.Dial("tcp", "localhost:8080")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	conn.Write([]byte(fmt.Sprintf("GET_KEY:%d\n", port)))
+
+	reader := bufio.NewReader(conn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	response = strings.TrimSpace(response)
+
+	if strings.HasPrefix(response, "ERROR:") {
+		return nil, fmt.Errorf(response)
+	}
+
+	parts := strings.SplitN(response, ":", 2)
+	if len(parts) != 2 || parts[0] != "KEY" {
+		return nil, fmt.Errorf("invalid response")
+	}
+
+	// Base64 to bytes
+	publicBytes, _ := base64.StdEncoding.DecodeString(parts[1])
+	// bytes to publicKey
+	pubKey, _ := x509.ParsePKIXPublicKey(publicBytes)
+	return pubKey.(*rsa.PublicKey), nil
+}
+
 func main() {
 	// Annuaire local qui a partir d'1 port donne la clé publique (partie qui sera rempli grâce au serveur plus tard)
 	publicKeys := make(map[int]*rsa.PublicKey)
 
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: go run main.go <id> <port>")
-		fmt.Println("Exemple: go run main.go node-1 9010")
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run main.go <id>")
+		fmt.Println("Exemple: go run main.go node-1")
 		return
 	}
 
 	id := os.Args[1]
-	port, err := strconv.Atoi(os.Args[2])
-	if err != nil {
-		fmt.Println("Error parsing port:", err)
-		return
-	}
 
-	node, err := NewNode(id, port)
+	node, err := NewNode(id)
 	if err != nil {
 		fmt.Println("Error creating node:", err)
 		return
@@ -210,6 +238,19 @@ func main() {
 }
 
 func Encapsulator_func(message string, route []int, publicKeys map[int]*rsa.PublicKey) (string, error) {
+
+	//Fetching keys if needed
+	for _, port := range route {
+		if _, ok := publicKeys[port]; !ok {
+			fmt.Println("Key not found searching for it ...")
+			key, err := FetchKeyFromServer(port)
+			if err != nil {
+				return "", fmt.Errorf("error fetching public key for port %d: %v", port, err)
+			}
+			publicKeys[port] = key
+			fmt.Println("Found public key for port ", port)
+		}
+	}
 
 	currentPayload := "MSG:" + message //encapsulation du mess final
 

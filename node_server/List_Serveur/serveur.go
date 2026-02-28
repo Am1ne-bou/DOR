@@ -156,6 +156,41 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
+	case "GET_KEY":
+		// Format GET_KEY:port
+		if len(parts) < 2 {
+			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
+			if err != nil {
+				return
+			}
+			return
+		}
+
+		port, err := strconv.Atoi(parts[1])
+		if err != nil {
+			_, err := conn.Write([]byte("ERROR:Invalid port\n"))
+			if err != nil {
+				return
+			}
+			return
+		}
+
+		nodes, _ := data.GetNodesList()
+
+		for _, node := range nodes {
+			if node.Port == port {
+				_, err := conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
+				if err != nil {
+					return
+				}
+			}
+		}
+
+		_, err = conn.Write([]byte("ERROR:Node not found\n"))
+		if err != nil {
+			return
+		}
+
 	case "QUIT":
 		// Format: QUIT:id
 		if len(parts) < 2 {
