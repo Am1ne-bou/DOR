@@ -29,8 +29,8 @@ func InitTable() error {
         id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		uuid TEXT,
         name TEXT,
-		ip INTEGER,
-		port TEXT,
+		ip TEXT,
+		port INTEGER,
 		publicKey TEXT
     );
     `
@@ -58,24 +58,31 @@ func GetNodesList() ([]model.NodeInfo, error) {
 
 	var nodes []model.NodeInfo
 
-	rows, err := Db.Query("SELECT name, port, key FROM nodes")
+	rows, err := Db.Query("SELECT uuid, name, ip, port, publicKey FROM nodes")
 	if err != nil {
 		return []model.NodeInfo{}, err
 	}
 
-	defer rows.Close()
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+
+		}
+	}(rows)
 
 	for rows.Next() {
-		var name string
+		var uuid, name, ip, key string
 		var port int
-		var key string
-		err = rows.Scan(&name, &port, &key)
 
-		if err != nil {
-			return []model.NodeInfo{}, err
-		}
+		err = rows.Scan(&uuid, &name, &ip, &port, &key)
 
-		nodes = append(nodes, model.NodeInfo{Name: name, Port: port, PublicKey: key})
+		nodes = append(nodes, model.NodeInfo{
+			Uuid:      uuid,
+			Name:      name,
+			Ip:        ip,
+			Port:      port,
+			PublicKey: key,
+		})
 	}
 
 	if err = rows.Err(); err != nil {
@@ -100,7 +107,9 @@ func ClearTable() error {
 
 func Close() {
 	if Db != nil {
-		Db.Close()
-		//os.Remove("test.db")
+		err := Db.Close()
+		if err != nil {
+			return
+		}
 	}
 }

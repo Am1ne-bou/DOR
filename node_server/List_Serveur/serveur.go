@@ -25,13 +25,33 @@ func main() {
 		fmt.Println("Error listen:", err)
 		return
 	}
-	defer listener.Close()
+	defer func(listener net.Listener) {
+		err := listener.Close()
+		if err != nil {
+			fmt.Println("Error closing listener:", err)
+		}
+	}(listener)
 
 	// Initialize the database
-	data.Connect("test.db") // Open the database
-	defer data.Close()      // Ensure the database is closed on exit and DELETED to change after
-	data.InitTable()        // Initialize the nodes table if not exists
-	data.ClearTable()       // Clear existing nodes on startup
+	err = data.Connect("dor_nodes.db") // Open the database
+	if err != nil {
+		fmt.Println("Error connecting:", err)
+		return
+	}
+
+	defer data.Close() // Ensure the database is closed on exit and DELETED to change after
+
+	err = data.InitTable() // Initialize the nodes table if not exists
+	if err != nil {
+		fmt.Println("Error initializing table:", err)
+		return
+	}
+
+	err = data.ClearTable() // Clear existing nodes on startup
+	if err != nil {
+		fmt.Println("Error clearing table:", err)
+		return
+	}
 
 	fmt.Println("Directory Server on port 8080")
 	fmt.Println("\nCommandes disponibles:")
@@ -71,7 +91,12 @@ func acceptConnections(listener net.Listener) {
 }
 
 func handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+
+		}
+	}(conn)
 
 	reader := bufio.NewReader(conn)
 
@@ -93,7 +118,10 @@ func handleConnection(conn net.Conn) {
 	case "INIT":
 		// Format: INIT:id:port:key
 		if len(parts) < 4 {
-			conn.Write([]byte("ERROR:Invalid format\n"))
+			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
+			if err != nil {
+				return
+			}
 			return
 		}
 
@@ -110,19 +138,23 @@ func handleConnection(conn net.Conn) {
 		}
 
 		// Ajout dans BDD
-		data.AddNode(&info)
-
-		// Lecture des noeuds dans bdd
-		nodesSQL, _ := data.GetNodesList()
-		for _, node := range nodesSQL {
-			fmt.Printf("%s : %d : %s\n", node.Name, node.Port, node.PublicKey)
+		err := data.AddNode(&info)
+		if err != nil {
+			fmt.Println("Error adding node:", err)
+			return
 		}
 
-		fmt.Printf("[+] Node %s registered (Port: %d, Total: %d)\n", name, port, len(nodesSQL))
-		conn.Write([]byte("INIT_ACK:" + name + "\n"))
+		fmt.Printf("[+] Node %s registered (Port: %d)\n", name, port)
+		_, err = conn.Write([]byte("INIT_ACK:" + name + "\n"))
+		if err != nil {
+			return
+		}
 
 	case "GET_LIST":
-		conn.Write([]byte(getNodesList()))
+		_, err := conn.Write([]byte(getNodesList()))
+		if err != nil {
+			return
+		}
 
 	case "QUIT":
 		// Format: QUIT:id
@@ -131,18 +163,18 @@ func handleConnection(conn net.Conn) {
 		}
 		id := parts[1]
 
-		data.RemoveNode(id)
-
-		// Lecture des noeuds dans bdd
-		//nodesSQL, _ := data.GetNodesList()
-		//for _, node := range nodesSQL {
-		//	fmt.Printf("%s : %d : %d\n", node.ID, node.Port, node.Key)
-		//}
+		err := data.RemoveNode(id)
+		if err != nil {
+			return
+		}
 
 		fmt.Printf("[-] Node %s unregistered\n", id)
 
 	default:
-		conn.Write([]byte("ERROR:Unknown command\n"))
+		_, err := conn.Write([]byte("ERROR:Unknown command\n"))
+		if err != nil {
+			return
+		}
 		return
 	}
 }
@@ -193,6 +225,7 @@ func TestPing() {
 	for range ticker.C {
 		nodes, err := data.GetNodesList()
 		if err != nil {
+			fmt.Println("Error:", err)
 			continue
 		}
 
@@ -200,10 +233,18 @@ func TestPing() {
 			addr := fmt.Sprintf("localhost:%d", node.Port)
 			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 			if err != nil {
-				data.RemoveNode(node.Name)
+				err := data.RemoveNode(node.Name)
+				if err != nil {
+					fmt.Println("Error removing node:", err)
+					return
+				}
 				fmt.Printf("Node %s removed\n", node.Name)
 			} else {
-				conn.Close()
+				err := conn.Close()
+				if err != nil {
+					fmt.Println("Error closing connection:", err)
+					return
+				}
 			}
 		}
 	}
