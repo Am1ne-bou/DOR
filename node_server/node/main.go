@@ -9,6 +9,7 @@ import (
 	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n), idem pour ":"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net"
 	"os"
 	"project/node_server/model"
@@ -105,7 +106,8 @@ func main() {
 	fmt.Println("\nCommandes disponibles:")
 	fmt.Println("  FETCH:<port>                      - Récupérer la clé publique d'un noeud")
 	fmt.Println("  MSG:<port>:<message>              - Message direct")
-	fmt.Println("  RELAY:<port>:<port>:...:<message> - Relai multi-hop")
+	fmt.Println("  RELAY:<port>:<port>:...:<message> - Relai multi-hop (route manuelle)")
+	fmt.Println("  SEND:<nbr>:<port>:<message>       - Envoi auto (route aléatoire)")
 	fmt.Println("  QUIT:                             - Quitter")
 	fmt.Println("  LIST:                             - Afficher la liste des noeuds enregistrés")
 	fmt.Println()
@@ -217,6 +219,104 @@ func main() {
 				fmt.Println("Erreur:", err)
 			}
 
+		case "SEND":
+			// Format: SEND:<nbr_relays>:<port_dest>:<message>
+			// Build an auto route rand from a nbr of relays
+			subParts := strings.SplitN(data, ":", 3)
+			if len(subParts) < 3 {
+				fmt.Println("Format: SEND:<nbr_relays>:<port>:<message>")
+				continue
+			}
+
+			numRelays, err := strconv.Atoi(subParts[0])
+			if err != nil {
+				fmt.Println("Error parsing relay number:", err)
+				continue
+			}
+
+			destPort, err := strconv.Atoi(subParts[1])
+			if err != nil {
+				fmt.Println("Port destination invalide:", subParts[1])
+				continue
+			}
+			message := subParts[2]
+
+			// Recuperation de la liste des nodes
+			listStr, err := node.GetNodesList()
+			if err != nil {
+				fmt.Println("Erreur récupération liste:", err)
+				continue
+			}
+
+			if listStr == "LIST:empty" {
+				fmt.Println("Aucun node disponible sur le réseau")
+				continue
+			}
+
+			// Parser la réponse LIST:name|port|key,name|port|key,...
+			listData := strings.TrimPrefix(listStr, "LIST:") //name|port|key,name|port|key
+			entries := strings.Split(listData, ",")          // [name|port|key, name|port|key,...]
+
+			var candidates []int
+			destFound := false
+			for _, entry := range entries {
+				fields := strings.SplitN(entry, "|", 3)
+				if len(fields) < 2 {
+					continue
+				}
+				p, err := strconv.Atoi(fields[1])
+				if err != nil {
+					continue
+				}
+				if p == destPort {
+					destFound = true
+				}
+				// Exclude the port of this node and the port of the dest from the route
+				if p != node.Port && p != destPort {
+					candidates = append(candidates, p)
+				}
+			}
+
+			if !destFound {
+				fmt.Printf("Destination :%d introuvable dans le réseau\n", destPort)
+				continue
+			}
+
+			// Select 3 relais
+			if numRelays > len(candidates) {
+				numRelays = len(candidates)
+			}
+			if numRelays == 0 {
+				fmt.Println("Pas assez de nodes pour construire une route (besoin d'au moins 1 relais)")
+				continue
+			}
+
+			// Shuffle candidates
+			for i := len(candidates) - 1; i > 0; i-- {
+				j := mrand.Intn(i + 1)
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			}
+
+			relays := candidates[:numRelays]
+
+			// Build the route : [relays..., dest]
+			route := append(relays, destPort)
+			fmt.Printf("Route automatique: %v\n", route)
+
+			// Encapsulate in onion layers and send to the first node
+			onion, err := Encapsulator_func(message, route, publicKeys)
+			if err != nil {
+				fmt.Println("Erreur encapsulation:", err)
+				continue
+			}
+
+			err = node.SendTo(route[0], onion)
+			if err != nil {
+				fmt.Println("Erreur envoi:", err)
+			} else {
+				fmt.Println("Message envoyé via route automatique !")
+			}
+
 		////
 		case "LIST":
 			list, err := node.GetNodesList()
@@ -231,12 +331,14 @@ func main() {
 			fmt.Println("Shutting down node...")
 			node.Stop()
 			return
+
 		default:
 			fmt.Println("Unknown command. Use MSG or RELAY.")
 		}
 	}
 }
 
+// Encapsulator_func wraps the message in multiple encryption layers
 func Encapsulator_func(message string, route []int, publicKeys map[int]*rsa.PublicKey) (string, error) {
 
 	//Fetching keys if needed
