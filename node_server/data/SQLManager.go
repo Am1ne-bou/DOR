@@ -2,6 +2,8 @@ package data
 
 import (
 	"database/sql"
+	"strconv"
+
 	//"os"
 
 	"project/node_server/model"
@@ -90,6 +92,36 @@ func GetNodesList() ([]model.NodeInfo, error) {
 	}
 
 	return nodes, nil
+}
+
+func getAddr(nodeId string) (string, error) {
+	var out string
+
+	rows, err := Db.Query("SELECT DISTINCT ip, port FROM nodes WHERE name = ?", nodeId)
+	if err != nil {
+		return "", err
+	}
+
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+
+		}
+	}(rows)
+
+	for rows.Next() {
+		var ip string
+		var port int
+
+		err = rows.Scan(&ip, &port)
+		out = ip + ":" + strconv.Itoa(port)
+	}
+
+	if err = rows.Err(); err != nil {
+		return "", err
+	}
+
+	return out, nil
 }
 
 func RemoveNode(nodeID string) error {

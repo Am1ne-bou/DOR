@@ -129,10 +129,13 @@ func handleConnection(conn net.Conn) {
 		port, _ := strconv.Atoi(parts[2])
 		key := parts[3]
 
+		ip_string := conn.RemoteAddr().String()
+		ip_split := strings.Split(ip_string, ":")
+
 		info := model.NodeInfo{
 			Uuid:      uuid.New().String(),
 			Name:      name,
-			Ip:        conn.RemoteAddr().String(),
+			Ip:        ip_split[0],
 			Port:      port,
 			PublicKey: key,
 		}
