@@ -8,13 +8,34 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/tls"
 	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n, idem pour ":")
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 	"strings"
+	_ "embed"
 )
+
+//ATTENTION LA LIGNE EN DESSOUS N'EST PAS UN COMMENTAIRE
+//go:embed cert.pem
+//ATTENTION ne pas enlever les // ou supprimer la ligne au dessus !
+//(c'est pour la compil pour intégrer le fichier),
+
+var serverCert []byte
+
+func DialDirectoryServer(addr string) (*tls.Conn, error) {
+    certPool := x509.NewCertPool() //liste de certificats (vide pr l'instant)
+    certPool.AppendCertsFromPEM(serverCert)
+
+    config := &tls.Config{
+        RootCAs:    certPool, //notre liste de certificat de confiance 
+        ServerName: "localhost", //le certificat doit appartenir à local host
+    }
+
+    return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
+}
 
 type Node struct {
 	ID         string
@@ -87,7 +108,7 @@ func (n *Node) StartNode() {
 
 // ///
 func (n *Node) GetNodesList() (string, error) {
-	conn, err := net.Dial("tcp", "localhost:8080")
+	conn, err := DialDirectoryServer("localhost:8080")
 	if err != nil {
 		return "", err
 	}
@@ -216,7 +237,7 @@ func (n *Node) Stop() {
 
 	// Send QUIT to server to leave the list
 	// TODO: Implement QUIT message to directory server
-	conn, err := net.Dial("tcp", "localhost:8080")
+	conn, err := DialDirectoryServer("localhost:8080")
 	if err == nil {
 		msg := fmt.Sprintf("QUIT:%s\n", n.ID)
 		conn.Write([]byte(msg))
@@ -229,7 +250,7 @@ func (n *Node) Stop() {
 }
 
 func (n *Node) JoinServerList(addrlist string) error {
-	conn, err := net.Dial("tcp", addrlist)
+	conn, err := DialDirectoryServer(addrlist);
 	if err != nil {
 		return err
 	}

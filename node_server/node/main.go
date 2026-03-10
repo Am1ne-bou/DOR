@@ -45,7 +45,7 @@ func NewNode(id string) (*model.Node, error) {
 }
 
 func FetchKeyFromServer(port int) (*rsa.PublicKey, error) {
-	conn, err := net.Dial("tcp", "localhost:8080")
+	conn, err := model.DialDirectoryServer("localhost:8080");
 	if err != nil {
 		return nil, err
 	}

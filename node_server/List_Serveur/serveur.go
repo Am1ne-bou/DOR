@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"crypto/tls"
 
 	"project/node_server/data"
 	"project/node_server/model"
@@ -20,11 +21,22 @@ import (
 //var nbrNodes int = 0
 
 func main() {
-	listener, err := net.Listen("tcp", ":8080")
-	if err != nil {
-		fmt.Println("Error listen:", err)
-		return
-	}
+
+	//chargement du certificat
+	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
+    if err != nil {
+        fmt.Println("Erreur chargement certificat:", err)
+        return
+    }
+    config := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+    //écoute en tls
+    listener, err := tls.Listen("tcp", ":8080", config)
+    if err != nil {
+        fmt.Println("Error listen:", err)
+        return
+    }
+
 	defer func(listener net.Listener) {
 		err := listener.Close()
 		if err != nil {
