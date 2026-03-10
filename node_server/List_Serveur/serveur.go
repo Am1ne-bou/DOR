@@ -186,6 +186,7 @@ func handleConnection(conn net.Conn) {
 				if err != nil {
 					return
 				}
+				return;
 			}
 		}
 
@@ -281,7 +282,7 @@ func TestPing() {
 				err := conn.Close()
 				if err != nil {
 					fmt.Println("Error closing connection:", err)
-					return
+					continue; //un return ici kill la go routine
 				}
 			}
 		}

@@ -113,15 +113,19 @@ func main() {
 	fmt.Println()
 
 	for scanner.Scan() {
-		input := scanner.Text()
-		parts := strings.SplitN(input, ":", 2)
-		if len(parts) < 2 {
-			fmt.Println("Invalid format. Use MSG:<message> or RELAY:<port>:<message>")
-			continue
-		}
+		input := strings.TrimSpace(scanner.Text());
 
-		cmd := parts[0]
-		data := parts[1]
+		if input == "" {
+            continue;
+        }
+
+		parts := strings.SplitN(input, ":", 2)
+		cmd := strings.ToUpper(parts[0]); //commande marche en minuscule aussi
+		
+		var data string;
+        if len(parts) > 1 {
+            data = parts[1];
+        }
 
 		switch cmd {
 
@@ -300,7 +304,9 @@ func main() {
 			relays := candidates[:numRelays]
 
 			// Build the route : [relays..., dest]
-			route := append(relays, destPort)
+			var route []int;
+			route = append(route, relays...); //copie tableau pr si réutilisation
+			route = append(route, destPort);
 			fmt.Printf("Route automatique: %v\n", route)
 
 			// Encapsulate in onion layers and send to the first node
