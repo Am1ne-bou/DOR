@@ -130,12 +130,12 @@ func handleConnection(conn net.Conn) {
 		key := parts[3]
 
 		ip_string := conn.RemoteAddr().String()
-		ip_split := strings.Split(ip_string, ":")
+		host, _, _ := net.SplitHostPort(ip_string)
 
 		info := model.NodeInfo{
 			Uuid:      uuid.New().String(),
 			Name:      name,
-			Ip:        ip_split[0],
+			Ip:        host,
 			Port:      port,
 			PublicKey: key,
 		}
