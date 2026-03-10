@@ -12,6 +12,7 @@ import (
 	mrand "math/rand"
 	"net"
 	"os"
+	"github.com/google/uuid"
 	"project/node_server/model"
 	"strconv"
 	"strings"
@@ -354,7 +355,7 @@ func Encapsulator_func(message string, route []int, publicKeys map[int]*rsa.Publ
 		}
 	}
 
-	currentPayload := "MSG:" + message //encapsulation du mess final
+	currentPayload := "MSG:" + strings.ReplaceAll(uuid.New().String(), ":", "-") + ":" + message //encapsulation du mess final
 
 	for i := len(route) - 1; i >= 0; i-- {
 		targetPort := route[i]               //on recup le port de noeud

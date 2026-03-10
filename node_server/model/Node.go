@@ -164,8 +164,13 @@ func (n *Node) handlerroutine(conn net.Conn) {
 
 	switch cmd {
 	case "MSG":
-		// Direct message
-		fmt.Printf("[%s] Message reçu: \"%s\"\n", n.ID, data)
+		// Format: MSG:uuid:message
+		msgParts := strings.SplitN(data, ":", 2)
+		if len(msgParts) < 2 {
+			fmt.Printf("[%s] MSG format invalide\n", n.ID)
+			return
+		}
+		fmt.Printf("[%s] Message reçu (UUID: %s): \"%s\"\n", n.ID, msgParts[0], msgParts[1])
 
 	case "RELAY":
 		// Format: RELAY:<nextPort>:<rest>
