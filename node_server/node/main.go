@@ -12,10 +12,10 @@ import (
 	mrand "math/rand"
 	"net"
 	"os"
-	"github.com/google/uuid"
 	"project/node_server/model"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func NewNode(id string, serverAddr string) (*model.Node, error) {
@@ -36,18 +36,19 @@ func NewNode(id string, serverAddr string) (*model.Node, error) {
 	}
 
 	return &model.Node{
-		ID:         id,
-		Port:       listener.Addr().(*net.TCPAddr).Port,
-		PrivateKey: privateKey,
-		PublicKey:  &publicKey,
-		Listener:   listener,
-		ServerAddr: serverAddr,
+		ID:          id,
+		Port:        listener.Addr().(*net.TCPAddr).Port,
+		PrivateKey:  privateKey,
+		PublicKey:   &publicKey,
+		Listener:    listener,
+		ServerAddr:  serverAddr,
+		PendingACKs: make(map[string]chan bool),
 	}, nil
 
 }
 
 func FetchKeyFromServer(addr string, serverAddr string) (*rsa.PublicKey, error) {
-	conn, err := model.DialDirectoryServer(serverAddr);
+	conn, err := model.DialDirectoryServer(serverAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -117,19 +118,19 @@ func main() {
 	fmt.Println()
 
 	for scanner.Scan() {
-		input := strings.TrimSpace(scanner.Text());
+		input := strings.TrimSpace(scanner.Text())
 
 		if input == "" {
-            continue;
-        }
+			continue
+		}
 
 		parts := strings.SplitN(input, ":", 2)
-		cmd := strings.ToUpper(parts[0]); //commande marche en minuscule aussi
-		
-		var data string;
-        if len(parts) > 1 {
-            data = parts[1];
-        }
+		cmd := strings.ToUpper(parts[0]) //commande marche en minuscule aussi
+
+		var data string
+		if len(parts) > 1 {
+			data = parts[1]
+		}
 
 		switch cmd {
 
@@ -165,6 +166,7 @@ func main() {
 
 		case "MSG":
 			// Format: MSG:<ip>:<port>:<message>
+			// NO ACK
 			subParts := strings.SplitN(data, ":", 3)
 			if len(subParts) < 3 {
 				fmt.Println("Invalid MSG format. Use MSG:<port>:<message>")
@@ -172,7 +174,8 @@ func main() {
 			}
 			dstAddr := subParts[0] + ":" + subParts[1]
 			msg := subParts[2]
-			onion, err := Encapsulator_func(msg, []string{dstAddr}, publicKeys, serverAddr)
+			// no ACK returnRoute =nil
+			onion, _, err := Encapsulator_func(msg, []string{dstAddr}, nil, publicKeys, serverAddr)
 			if err != nil {
 				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
@@ -184,7 +187,7 @@ func main() {
 			}
 		case "RELAY":
 			// Format: RELAY:<ip1>:<port1>,<ip2>:<port2>,...,<message>
-
+			// no ACk
 			lastComma := strings.LastIndex(data, ",")
 			if lastComma == -1 {
 				fmt.Println("Format: RELAY:<ip>:<port>,<ip>:<port>,...,<message>")
@@ -198,8 +201,8 @@ func main() {
 			for _, addr := range addrsStr {
 				route = append(route, strings.TrimSpace(addr))
 			}
-
-			onion, err := Encapsulator_func(message, route, publicKeys, serverAddr)
+			//no ACK
+			onion, _, err := Encapsulator_func(message, route, nil, publicKeys, serverAddr)
 			if err != nil {
 				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
@@ -288,23 +291,55 @@ func main() {
 
 			relays := candidates[:numRelays]
 
-			// Build the route : [relays..., dest]
+			// Build the route forward : [relays..., dest]
 			route := append(relays, destAddr)
-			fmt.Printf("Route automatique: %v\n", route)
+			fmt.Printf("Route forward : %v\n", route)
+
+			// Build the return route inverse of the forward
+			var returnRoute []string
+			for i := len(relays) - 1; i >= 0; i-- {
+				returnRoute = append(returnRoute, relays[i])
+			}
+			returnRoute = append(returnRoute, nodeAddr)
+			fmt.Printf("Route retour:  %v\n", returnRoute)
 
 			// Encapsulate in onion layers and send to the first node
-			onion, err := Encapsulator_func(message, route, publicKeys, serverAddr)
+			onion, msgID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr)
 			if err != nil {
 				fmt.Println("Erreur encapsulation:", err)
 				continue
 			}
 
+			// save in the chanel before sending
+			ackChan := make(chan bool, 1)
+			node.Mu.Lock()
+			node.PendingACKs[msgID] = ackChan
+			node.Mu.Unlock()
+
 			err = node.SendTo(route[0], onion)
 			if err != nil {
 				fmt.Println("Erreur envoi:", err)
-			} else {
-				fmt.Println("Message envoyé via route automatique !")
+				node.Mu.Lock()
+				delete(node.PendingACKs, msgID)
+				node.Mu.Unlock()
+				continue
 			}
+
+			fmt.Printf("Message envoyé (msgID: %s), attente ACK...\n\n", msgID)
+
+			// Goroutine to wait for the ACK with timeout
+			go func(id string, ch chan bool) {
+				select {
+				case <-ch:
+					fmt.Printf("ACK confirmé pour %s\n\n", id)
+				case <-time.After(time.Second * 10):
+					// timeout
+					fmt.Printf("Timeout du ACK pour %s\n\n", id)
+					node.Mu.Lock()
+					delete(node.PendingACKs, id)
+					node.Mu.Unlock()
+				}
+			}(msgID, ackChan)
 
 		////
 		case "LIST":
@@ -328,56 +363,143 @@ func main() {
 }
 
 // Encapsulator_func wraps the message in multiple encryption layers
-func Encapsulator_func(message string, route []string, publicKeys map[string]*rsa.PublicKey, serverAddr string) (string, error) {
+func Encapsulator_func(
+	message string,
+	route []string,       // [R1, R2, dest]
+	returnRoute []string, // [R2, R1, sender] — nil si pas de ACK
+	publicKeys map[string]*rsa.PublicKey,
+	serverAddr string,
+) (string, string, error) {
 
 	//Fetching keys if needed
-	for _, port := range route {
+	allNodes := append([]string{}, route...)
+	if returnRoute != nil {
+		allNodes = append(allNodes, returnRoute...)
+	}
+	for _, port := range allNodes {
 		if _, ok := publicKeys[port]; !ok {
 			fmt.Println("Key not found searching for it ...")
 			key, err := FetchKeyFromServer(port, serverAddr)
 			if err != nil {
-				return "", fmt.Errorf("error fetching public key for %s: %v", port, err)
+				return "", "", fmt.Errorf("error fetching public key for %s: %v", port, err)
 			}
 			publicKeys[port] = key
 			fmt.Println("Found public key for ", port)
 		}
 	}
 
-	currentPayload := "MSG:" + strings.ReplaceAll(uuid.New().String(), ":", "-") + ":" + message
+	msgID := model.GenerateMsgID()
 
-	for i := len(route) - 1; i >= 0; i-- {
-		targetAddr := route[i]
-		pubKey, ok := publicKeys[targetAddr]
-		if !ok {
-			return "", fmt.Errorf("clé publique manquante pour %s", targetAddr)
+	var returnOnion string
+	var firstReturnHop string
+
+	if returnRoute != nil && len(returnRoute) > 0 {
+		firstReturnHop = returnRoute[0]
+		// the most inner layer return ACK for the sender
+		innerLayer := &model.OnionLayer{
+			Type:  "ACK",
+			MsgID: msgID,
 		}
 
-		//chiffrement "duo" (AES puis RSA):
+		// encrypt layer by layer from the sender
+		returnPayload, err := encryptOnionLayers(innerLayer, returnRoute, publicKeys)
+		if err != nil {
+			return "", "", fmt.Errorf("error building return onion: %v", err)
+		}
+		//
+		returnOnion = returnPayload
+	}
 
-		//Géneration clé AES aléatoire (32 octet)
-		aesKey := make([]byte, 32)
-		io.ReadFull(rand.Reader, aesKey)
+	//building the onion of tha payload
+	var innerLayer *model.OnionLayer
 
-		//chiffrement du mess en clair (payload) avec AES :
-		encPayload, _ := model.EncryptAES(aesKey, []byte(currentPayload))
+	if returnRoute != nil {
+		innerLayer = &model.OnionLayer{
+			Type:       "FINAL",
+			MsgID:      msgID,
+			ReturnAddr: firstReturnHop,
+			ReturnData: returnOnion,
+			Message:    message,
+		}
+	} else {
+		innerLayer = &model.OnionLayer{
+			Type:    "FINAL",
+			MsgID:   msgID,
+			Message: message,
+		}
+	}
 
-		//chiffrement de la clé AES avec RSA:
-		encKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, aesKey, nil)
+	// encrypt layer by layer from the destination
+	forwardPayload, err := encryptOnionLayers(innerLayer, route, publicKeys)
+	if err != nil {
+		return "", "", fmt.Errorf("error building forward onion: %v", err)
+	}
+
+	return forwardPayload, msgID, nil
+
+}
+
+// encryptOnionLayers encrypt an OnionLayer layer by layer from a route
+//
+// innerLayer = the final node will see (FINAL ou ACK)
+// route      = [hop1, hop2, ..., hopN]  — hopN will see innerLayer
+//
+// Retourne a string encrypted sent to hop1
+func encryptOnionLayers(
+	innerLayer *model.OnionLayer,
+	route []string,
+	publicKeys map[string]*rsa.PublicKey,
+) (string, error) {
+
+	// innerlayer to string
+	innerLayerString := innerLayer.OnionlayerToString()
+
+	// encrypte the last node
+	currentPayload, err := encryptForNode([]byte(innerLayerString), publicKeys[route[len(route)-1]])
+	if err != nil {
+		return "", err
+	}
+
+	// encrypte layer by layer from the end
+	// i = len-2 just the middle nodes
+	for i := len(route) - 2; i >= 0; i-- {
+		// build the RELAY OnionLayer
+		relayLayer := &model.OnionLayer{
+			Type:    "RELAY",
+			NextHop: route[i+1],     // next hop
+			Payload: currentPayload, // Onion encrypted of the inner layers
+		}
+		relayLayerString := relayLayer.OnionlayerToString()
+
+		currentPayload, err = encryptForNode([]byte(relayLayerString), publicKeys[route[i]])
 		if err != nil {
 			return "", err
-		}
-
-		// Format fusion : base64(clé_AES_chiffrée_via_RSA):base64(payload_chiffre_via_AES)
-		encodedKey := base64.StdEncoding.EncodeToString(encKey)
-		encodedPayload := base64.StdEncoding.EncodeToString(encPayload)
-		encoded := encodedKey + ":" + encodedPayload
-
-		if i > 0 { //si ce n'est pas le premier saut, il faut mettre un "header" (RELAY:IP:PORT:msg_encrypted)
-			currentPayload = fmt.Sprintf("RELAY:%s:%s", targetAddr, encoded)
-		} else { //si c'est le 1er saut (noyaux du message):
-			currentPayload = encoded
 		}
 	}
 
 	return currentPayload, nil
+}
+
+// encryptForNode encrypt bytes for a node (AES + RSA)
+// Retourn this format "base64(key_RSA):base64(plaintext_AES)"
+func encryptForNode(plaintext []byte, pubKey *rsa.PublicKey) (string, error) {
+	// Generate a random AES key
+	aesKey := make([]byte, 32)
+	io.ReadFull(rand.Reader, aesKey)
+
+	// encrypt the plaintext
+	encPlaintext, err := model.EncryptAES(aesKey, plaintext)
+	if err != nil {
+		return "", err
+	}
+
+	// Encrypt the the AES key with the RSA key
+	encKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, aesKey, nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Format : base64(key AES encrpted by RSA):base64(plaintext encrypted by AES)
+	return base64.StdEncoding.EncodeToString(encKey) + ":" +
+		base64.StdEncoding.EncodeToString(encPlaintext), nil
 }

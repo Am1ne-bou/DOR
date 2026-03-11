@@ -7,14 +7,15 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
 	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n, idem pour ":")
 	"fmt"
 	"io"
 	"net"
 	"strings"
-	_ "embed"
+	"sync"
 )
 
 //ATTENTION LA LIGNE EN DESSOUS N'EST PAS UN COMMENTAIRE
@@ -25,25 +26,27 @@ import (
 var serverCert []byte
 
 func DialDirectoryServer(addr string) (*tls.Conn, error) {
-    certPool := x509.NewCertPool() //liste de certificats (vide pr l'instant)
-    certPool.AppendCertsFromPEM(serverCert)
+	certPool := x509.NewCertPool() //liste de certificats (vide pr l'instant)
+	certPool.AppendCertsFromPEM(serverCert)
 
-    config := &tls.Config{
-        RootCAs:    certPool, //notre liste de certificat de confiance 
-       	InsecureSkipVerify: true, // TODO: générer un certificat avec les bonnes IP/SAN
-    }
+	config := &tls.Config{
+		RootCAs:            certPool, //notre liste de certificat de confiance
+		InsecureSkipVerify: true,     // TODO: générer un certificat avec les bonnes IP/SAN
+	}
 
-    return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
+	return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
 }
 
 type Node struct {
-	ID         string
-	Port       int
-	PrivateKey *rsa.PrivateKey
-	PublicKey  *rsa.PublicKey
-	Listener   net.Listener
-	ServerAddr string // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
-	NodeIP     string // IP du nœud vue par le serveur
+	ID          string
+	Port        int
+	PrivateKey  *rsa.PrivateKey
+	PublicKey   *rsa.PublicKey
+	Listener    net.Listener
+	ServerAddr  string               // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
+	NodeIP      string               // IP du nœud vue par le serveur
+	PendingACKs map[string]chan bool // msgID  canal de notification
+	Mu          sync.Mutex           // protège PendingACKs
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -174,44 +177,52 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		return
 	}
 
-	line_decrypted := string(decrypted)
-	parts := strings.SplitN(line_decrypted, ":", 2)
-
-	if len(parts) < 2 {
+	// onion layer
+	layer, err := StringToOnionLayer(string(decrypted))
+	if err != nil {
+		fmt.Println(err)
 		return
 	}
-
-	cmd := parts[0]
-	data := parts[1]
-
-	switch cmd {
-	case "MSG":
-		// Format: MSG:uuid:message
-		msgParts := strings.SplitN(data, ":", 2)
-		if len(msgParts) < 2 {
-			fmt.Printf("[%s] MSG format invalide\n", n.ID)
-			return
-		}
-		fmt.Printf("[%s] Message reçu (UUID: %s): \"%s\"\n", n.ID, msgParts[0], msgParts[1])
-
+	switch layer.Type {
 	case "RELAY":
-		subParts := strings.SplitN(data, ":", 3)
-		if len(subParts) < 3 {
-			fmt.Printf("[%s] RELAY format invalide\n", n.ID)
+		fmt.Printf("[%s] Received relay layer - NextHop from layer: '%s'\n", n.ID, layer.NextHop)
+		fmt.Printf("[%s] Full layer content: Type=%s, MsgID=%s, NextHop=%s, ReturnAddr=%s \n",
+			n.ID, layer.Type, layer.MsgID, layer.NextHop, layer.ReturnAddr)
+		//node relay
+		fmt.Printf("[%s] Relai vers %s\n", n.ID, layer.NextHop)
+
+		// Check if the address includes a port
+		if !strings.Contains(layer.NextHop, ":") {
+			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.NextHop)
 			return
 		}
 
-		nextAddr := subParts[0] + ":" + subParts[1] // ip:port
-		payload := subParts[2]
-		fmt.Printf("[%s] Relai vers %s\n", n.ID, nextAddr)
-
-		err = n.SendTo(nextAddr, payload)
+		err = n.SendTo(layer.NextHop, layer.Payload)
 
 		if err != nil {
 			fmt.Printf("[%s] Erreur relai: %s\n", n.ID, err)
 		}
+
+	case "FINAL":
+		//node final the destination
+		fmt.Printf("[%s] Message recu (MsgID : %s): \"%s\"\n", n.ID, layer.MsgID, layer.Message)
+		if layer.ReturnAddr != "" && layer.ReturnData != "" {
+			fmt.Printf("[%s] Envoi ACK pour %s via %s\n", n.ID, layer.MsgID, layer.ReturnAddr)
+			err = n.SendTo(layer.ReturnAddr, layer.ReturnData)
+			if err != nil {
+				fmt.Printf("[%s] Erreur envoi ACK: %s\n", n.ID, err)
+			}
+		}
+	case "ACK":
+		// node sender
+		n.Mu.Lock()
+		if ch, ok := n.PendingACKs[layer.MsgID]; ok {
+			ch <- true
+			delete(n.PendingACKs, layer.MsgID)
+		}
+		n.Mu.Unlock()
 	default:
-		fmt.Printf("[%s] Commande inconnue: %s\n", n.ID, cmd)
+		fmt.Printf("[%s] Type inconnue: %s\n", n.ID, layer.Type)
 
 	}
 }
@@ -248,7 +259,7 @@ func (n *Node) Stop() {
 }
 
 func (n *Node) JoinServerList(addrlist string) error {
-	conn, err := DialDirectoryServer(addrlist);
+	conn, err := DialDirectoryServer(addrlist)
 	if err != nil {
 		return err
 	}

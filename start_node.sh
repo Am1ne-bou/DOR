@@ -1,5 +1,5 @@
 #!/bin/bash
-N=8
+N=5
 
 gnome-terminal -- bash -c "cd node_server/List_Serveur && go run serveur.go; bash" &
 sleep 2
