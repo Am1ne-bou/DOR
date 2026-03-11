@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
 	"strings"
 	_ "embed"
 )
@@ -31,7 +30,7 @@ func DialDirectoryServer(addr string) (*tls.Conn, error) {
 
     config := &tls.Config{
         RootCAs:    certPool, //notre liste de certificat de confiance 
-        ServerName: "localhost", //le certificat doit appartenir à local host
+       	InsecureSkipVerify: true, // TODO: générer un certificat avec les bonnes IP/SAN
     }
 
     return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
@@ -43,6 +42,8 @@ type Node struct {
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
 	Listener   net.Listener
+	ServerAddr string // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
+	NodeIP     string // IP du nœud vue par le serveur
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -108,7 +109,7 @@ func (n *Node) StartNode() {
 
 // ///
 func (n *Node) GetNodesList() (string, error) {
-	conn, err := DialDirectoryServer("localhost:8080")
+	conn, err := DialDirectoryServer(n.ServerAddr)
 	if err != nil {
 		return "", err
 	}
@@ -185,29 +186,27 @@ func (n *Node) handlerroutine(conn net.Conn) {
 
 	switch cmd {
 	case "MSG":
-		// Direct message
-		fmt.Printf("[%s] Message reçu: \"%s\"\n", n.ID, data)
+		// Format: MSG:uuid:message
+		msgParts := strings.SplitN(data, ":", 2)
+		if len(msgParts) < 2 {
+			fmt.Printf("[%s] MSG format invalide\n", n.ID)
+			return
+		}
+		fmt.Printf("[%s] Message reçu (UUID: %s): \"%s\"\n", n.ID, msgParts[0], msgParts[1])
 
 	case "RELAY":
-		// Format: RELAY:<nextPort>:<rest>
-		// <rest> can be "MSG:message" or "RELAY:<port>:..."
-		subParts := strings.SplitN(data, ":", 2)
-		if len(subParts) < 2 {
+		subParts := strings.SplitN(data, ":", 3)
+		if len(subParts) < 3 {
 			fmt.Printf("[%s] RELAY format invalide\n", n.ID)
 			return
 		}
 
-		nextPort, err := strconv.Atoi(subParts[0])
-		if err != nil {
-			fmt.Printf("[%s] Port invalide: %s\n", n.ID, subParts[0])
-			return
-		}
+		nextAddr := subParts[0] + ":" + subParts[1] // ip:port
+		payload := subParts[2]
+		fmt.Printf("[%s] Relai vers %s\n", n.ID, nextAddr)
 
-		payload := subParts[1]
-		fmt.Printf("[%s] Relai vers :%d\n", n.ID, nextPort)
+		err = n.SendTo(nextAddr, payload)
 
-		// Send the palyoad
-		err = n.SendTo(nextPort, payload)
 		if err != nil {
 			fmt.Printf("[%s] Erreur relai: %s\n", n.ID, err)
 		}
@@ -217,10 +216,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	}
 }
 
-func (n *Node) SendTo(targetPort int, message string) error {
+func (n *Node) SendTo(targetAddr string, message string) error {
 
-	addr := fmt.Sprintf("localhost:%d", targetPort)
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.Dial("tcp", targetAddr)
 	if err != nil {
 		return err
 	}
@@ -237,7 +235,7 @@ func (n *Node) Stop() {
 
 	// Send QUIT to server to leave the list
 	// TODO: Implement QUIT message to directory server
-	conn, err := DialDirectoryServer("localhost:8080")
+	conn, err := DialDirectoryServer(n.ServerAddr)
 	if err == nil {
 		msg := fmt.Sprintf("QUIT:%s\n", n.ID)
 		conn.Write([]byte(msg))
@@ -283,7 +281,11 @@ func (n *Node) JoinServerList(addrlist string) error {
 
 	response = strings.TrimSpace(response)
 	if strings.HasPrefix(response, "INIT_ACK") {
-		fmt.Printf("[%s] Registered to directory server\n", n.ID)
+		ackParts := strings.SplitN(response, ":", 3)
+		if len(ackParts) >= 3 {
+			n.NodeIP = ackParts[2]
+		}
+		fmt.Printf("[%s] Registered to directory server (IP: %s)\n", n.ID, n.NodeIP)
 		return nil
 	}
 

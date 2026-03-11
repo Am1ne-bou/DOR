@@ -31,7 +31,7 @@ func main() {
     config := &tls.Config{Certificates: []tls.Certificate{cert}}
 
     //écoute en tls
-    listener, err := tls.Listen("tcp", ":8080", config)
+    listener, err := tls.Listen("tcp4", "0.0.0.0:8080", config)
     if err != nil {
         fmt.Println("Error listen:", err)
         return
@@ -160,7 +160,7 @@ func handleConnection(conn net.Conn) {
 		}
 
 		fmt.Printf("[+] Node %s registered (Port: %d)\n", name, port)
-		_, err = conn.Write([]byte("INIT_ACK:" + name + "\n"))
+		_, err = conn.Write([]byte("INIT_ACK:" + name + ":" + host + "\n"))
 		if err != nil {
 			return
 		}
@@ -172,40 +172,41 @@ func handleConnection(conn net.Conn) {
 		}
 
 	case "GET_KEY":
-		// Format GET_KEY:port
-		if len(parts) < 2 {
-			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
-			if err != nil {
-				return
-			}
-			return
-		}
-
-		port, err := strconv.Atoi(parts[1])
-		if err != nil {
-			_, err := conn.Write([]byte("ERROR:Invalid port\n"))
-			if err != nil {
-				return
-			}
-			return
-		}
-
-		nodes, _ := data.GetNodesList()
-
-		for _, node := range nodes {
-			if node.Port == port {
-				_, err := conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
+			// Format GET_KEY:<ip>:<port>
+			if len(parts) < 3 {
+				_, err := conn.Write([]byte("ERROR:Invalid format\n"))
 				if err != nil {
 					return
 				}
-				return;
+				return
 			}
-		}
 
-		_, err = conn.Write([]byte("ERROR:Node not found\n"))
-		if err != nil {
-			return
-		}
+			ip := parts[1]
+			port, err := strconv.Atoi(parts[2])
+			if err != nil {
+				_, err := conn.Write([]byte("ERROR:Invalid port\n"))
+				if err != nil {
+					return
+				}
+				return
+			}
+
+			nodes, _ := data.GetNodesList()
+
+			for _, node := range nodes {
+				if node.Ip == ip && node.Port == port {
+					_, err := conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
+					if err != nil {
+						return
+					}
+					return
+				}
+			}
+
+			_, err = conn.Write([]byte("ERROR:Node not found\n"))
+			if err != nil {
+				return
+			}
 
 	case "QUIT":
 		// Format: QUIT:id
@@ -244,7 +245,7 @@ func getNodesList() string {
 		if i > 0 {
 			result.WriteString(",")
 		}
-		result.WriteString(fmt.Sprintf("%s|%d|%s", info.Name, info.Port, info.PublicKey))
+		result.WriteString(fmt.Sprintf("%s|%s|%d|%s", info.Name, info.Ip, info.Port, info.PublicKey))
 	}
 	result.WriteString("\n")
 
@@ -263,7 +264,7 @@ func showNodes() {
 		fmt.Println("  (aucun)")
 	} else {
 		for _, info := range nodes {
-			fmt.Printf("  . %s - Port: %d, Key: %s\n", info.Name, info.Port, info.PublicKey)
+			fmt.Printf("  . %s - Addr: %s:%d, Key: %s\n", info.Name, info.Ip, info.Port, info.PublicKey)
 		}
 	}
 	fmt.Printf("Total: %d\n\n", len(nodes))
@@ -281,7 +282,7 @@ func TestPing() {
 		}
 
 		for _, node := range nodes {
-			addr := fmt.Sprintf("localhost:%d", node.Port)
+			addr := fmt.Sprintf("%s:%d", node.Ip, node.Port)
 			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 			if err != nil {
 				err := data.RemoveNode(node.Name)
