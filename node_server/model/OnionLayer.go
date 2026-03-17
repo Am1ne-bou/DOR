@@ -8,33 +8,31 @@ import (
 )
 
 type OnionLayer struct {
-	Type       string // Type of the node
-	MsgID      string // Id of the msg  "msg-123456"
-	NextHop    string // Next node
-	ReturnAddr string // Node before
-	ReturnData string // onion layer of the return encrypted
-	Message    string
-	Payload    string // onion layer of the next node encrypted
+	Type    string // RELAY, FINAL, ACK
+	MsgID   string
+	Next    string // RELAY  FINAL
+	From    string // RELAY
+	Data    string // RELAY  FINAL
+	Message string // FINAL seulement
 }
 
 func (layer OnionLayer) OnionlayerToString() string {
-	str := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", layer.Type, layer.MsgID, layer.NextHop, layer.ReturnAddr, layer.ReturnData, layer.Message, layer.Payload)
+	str := fmt.Sprintf("%s|%s|%s|%s|%s|%s", layer.Type, layer.MsgID, layer.Next, layer.From, layer.Data, layer.Message)
 	return str
 }
 
 func StringToOnionLayer(str string) (OnionLayer, error) {
-	parts := strings.SplitN(str, "|", 7)
-	if len(parts) != 7 {
+	parts := strings.SplitN(str, "|", 6)
+	if len(parts) != 6 {
 		return OnionLayer{}, fmt.Errorf("OnionLayer StringToOnionLayer Error Split")
 	}
 	ol := OnionLayer{
-		Type:       parts[0],
-		MsgID:      parts[1],
-		NextHop:    parts[2],
-		ReturnAddr: parts[3],
-		ReturnData: parts[4],
-		Message:    parts[5],
-		Payload:    parts[6],
+		Type:    parts[0],
+		MsgID:   parts[1],
+		Next:    parts[2],
+		From:    parts[3],
+		Data:    parts[4],
+		Message: parts[5],
 	}
 	///fmt.Printf("Debug Serializing layer: %s\n", str) // Debug log
 	return ol, nil

@@ -38,15 +38,16 @@ func DialDirectoryServer(addr string) (*tls.Conn, error) {
 }
 
 type Node struct {
-	ID          string
-	Port        int
-	PrivateKey  *rsa.PrivateKey
-	PublicKey   *rsa.PublicKey
-	Listener    net.Listener
-	ServerAddr  string               // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
-	NodeIP      string               // IP du nœud vue par le serveur
-	PendingACKs map[string]chan bool // msgID  canal de notification
-	Mu          sync.Mutex           // protège PendingACKs
+	ID            string
+	Port          int
+	PrivateKey    *rsa.PrivateKey
+	PublicKey     *rsa.PublicKey
+	Listener      net.Listener
+	ServerAddr    string               // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
+	NodeIP        string               // IP du nœud vue par le serveur
+	PendingACKs   map[string]chan bool // msgID  canal de notification
+	PendingRelays map[string]string    // msgID  addresse de noeud precedent pour NACK
+	Mu            sync.Mutex           // protège PendingACKs
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -145,6 +146,28 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		return
 	}
 
+	// NACK:msgid
+	if strings.HasPrefix(line, "NACK:") {
+		msgId := line[len("NACK:"):]
+		fmt.Printf("[%s] NACK received for %s\n", n.ID, msgId)
+
+		n.Mu.Lock()
+		//if its the sender
+		if ch, ok := n.PendingACKs[msgId]; ok {
+			ch <- false
+			delete(n.PendingACKs, msgId)
+			n.Mu.Unlock()
+			return
+		}
+		prevAddr, exists := n.PendingRelays[msgId]
+		delete(n.PendingRelays, msgId)
+		n.Mu.Unlock()
+		if exists {
+			fmt.Printf("[%s] Propagating NACK for %s to %s\n", n.ID, msgId, prevAddr)
+			n.SendTo(prevAddr, fmt.Sprintf("NACK:%s", msgId))
+		}
+		return
+	}
 	// Séparation clé AES (chiffré via RSA) et payload chiffré via la dite clé AES
 	partsAES := strings.SplitN(line, ":", 2)
 	if len(partsAES) < 2 {
@@ -185,32 +208,37 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	}
 	switch layer.Type {
 	case "RELAY":
-		fmt.Printf("[%s] Received relay layer - NextHop from layer: '%s'\n", n.ID, layer.NextHop)
-		fmt.Printf("[%s] Full layer content: Type=%s, MsgID=%s, NextHop=%s, ReturnAddr=%s \n",
-			n.ID, layer.Type, layer.MsgID, layer.NextHop, layer.ReturnAddr)
+		fmt.Printf("[%s] Received relay layer - Next from layer: '%s'\n", n.ID, layer.Next)
+		fmt.Printf("[%s] Full layer content: Type=%s, MsgID=%s, Next=%s, From=%s \n",
+			n.ID, layer.Type, layer.MsgID, layer.Next, layer.From)
 		//node relay
-		fmt.Printf("[%s] Relai vers %s\n", n.ID, layer.NextHop)
+		fmt.Printf("[%s] Relai vers %s\n", n.ID, layer.Next)
 
 		// Check if the address includes a port
-		if !strings.Contains(layer.NextHop, ":") {
-			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.NextHop)
+		if !strings.Contains(layer.Next, ":") {
+			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.Next)
 			return
 		}
 
-		err = n.SendTo(layer.NextHop, layer.Payload)
+		n.Mu.Lock()
+		n.PendingRelays[layer.MsgID] = layer.From
+		n.Mu.Unlock()
 
+		err = n.SendTo(layer.Next, layer.Data)
 		if err != nil {
 			fmt.Printf("[%s] Erreur relai: %s\n", n.ID, err)
+			n.SendTo(layer.From, fmt.Sprintf("NACK:%s", layer.MsgID))
 		}
 
 	case "FINAL":
 		//node final the destination
 		fmt.Printf("[%s] Message recu (MsgID : %s): \"%s\"\n", n.ID, layer.MsgID, layer.Message)
-		if layer.ReturnAddr != "" && layer.ReturnData != "" {
-			fmt.Printf("[%s] Envoi ACK pour %s via %s\n", n.ID, layer.MsgID, layer.ReturnAddr)
-			err = n.SendTo(layer.ReturnAddr, layer.ReturnData)
+		if layer.Next != "" && layer.Data != "" {
+			fmt.Printf("[%s] Envoi ACK pour %s via %s\n", n.ID, layer.MsgID, layer.Next)
+			err = n.SendTo(layer.Next, layer.Data)
 			if err != nil {
 				fmt.Printf("[%s] Erreur envoi ACK: %s\n", n.ID, err)
+				n.SendTo(layer.From, fmt.Sprintf("NACK:%s", layer.MsgID))
 			}
 		}
 	case "ACK":

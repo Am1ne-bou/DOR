@@ -36,13 +36,14 @@ func NewNode(id string, serverAddr string) (*model.Node, error) {
 	}
 
 	return &model.Node{
-		ID:          id,
-		Port:        listener.Addr().(*net.TCPAddr).Port,
-		PrivateKey:  privateKey,
-		PublicKey:   &publicKey,
-		Listener:    listener,
-		ServerAddr:  serverAddr,
-		PendingACKs: make(map[string]chan bool),
+		ID:            id,
+		Port:          listener.Addr().(*net.TCPAddr).Port,
+		PrivateKey:    privateKey,
+		PublicKey:     &publicKey,
+		Listener:      listener,
+		ServerAddr:    serverAddr,
+		PendingACKs:   make(map[string]chan bool),
+		PendingRelays: make(map[string]string),
 	}, nil
 
 }
@@ -175,7 +176,8 @@ func main() {
 			dstAddr := subParts[0] + ":" + subParts[1]
 			msg := subParts[2]
 			// no ACK returnRoute =nil
-			onion, _, err := Encapsulator_func(msg, []string{dstAddr}, nil, publicKeys, serverAddr)
+			nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
+			onion, _, err := Encapsulator_func(msg, []string{dstAddr}, nil, publicKeys, serverAddr, nodeAddr)
 			if err != nil {
 				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
@@ -202,7 +204,8 @@ func main() {
 				route = append(route, strings.TrimSpace(addr))
 			}
 			//no ACK
-			onion, _, err := Encapsulator_func(message, route, nil, publicKeys, serverAddr)
+			nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
+			onion, _, err := Encapsulator_func(message, route, nil, publicKeys, serverAddr, nodeAddr)
 			if err != nil {
 				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
@@ -268,10 +271,9 @@ func main() {
 					candidates = append(candidates, addr)
 				}
 			}
-
 			if !destFound {
-				fmt.Printf("Destination %s introuvable dans le réseau\n", destAddr)
-				continue
+				//fmt.Printf("Destination %s introuvable dans le réseau\n", destAddr)
+				//continue
 			}
 
 			// Select relays
@@ -304,7 +306,7 @@ func main() {
 			fmt.Printf("Route retour:  %v\n", returnRoute)
 
 			// Encapsulate in onion layers and send to the first node
-			onion, msgID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr)
+			onion, msgID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr, nodeAddr)
 			if err != nil {
 				fmt.Println("Erreur encapsulation:", err)
 				continue
@@ -330,8 +332,12 @@ func main() {
 			// Goroutine to wait for the ACK with timeout
 			go func(id string, ch chan bool) {
 				select {
-				case <-ch:
-					fmt.Printf("ACK confirmé pour %s\n\n", id)
+				case success := <-ch:
+					if success {
+						fmt.Printf("ACK confirmé pour %s\n\n", id)
+					} else {
+						fmt.Printf("NACK reçu pour %s — le message n'a pas pu être transmis\n\n", id)
+					}
 				case <-time.After(time.Second * 10):
 					// timeout
 					fmt.Printf("Timeout du ACK pour %s\n\n", id)
@@ -369,6 +375,7 @@ func Encapsulator_func(
 	returnRoute []string, // [R2, R1, sender] — nil si pas de ACK
 	publicKeys map[string]*rsa.PublicKey,
 	serverAddr string,
+	senderAddr string,
 ) (string, string, error) {
 
 	//Fetching keys if needed
@@ -402,7 +409,7 @@ func Encapsulator_func(
 		}
 
 		// encrypt layer by layer from the sender
-		returnPayload, err := encryptOnionLayers(innerLayer, returnRoute, publicKeys)
+		returnPayload, err := encryptOnionLayers(innerLayer, returnRoute, publicKeys, returnRoute[len(returnRoute)-1])
 		if err != nil {
 			return "", "", fmt.Errorf("error building return onion: %v", err)
 		}
@@ -415,11 +422,11 @@ func Encapsulator_func(
 
 	if returnRoute != nil {
 		innerLayer = &model.OnionLayer{
-			Type:       "FINAL",
-			MsgID:      msgID,
-			ReturnAddr: firstReturnHop,
-			ReturnData: returnOnion,
-			Message:    message,
+			Type:    "FINAL",
+			MsgID:   msgID,
+			Next:    firstReturnHop,
+			Data:    returnOnion,
+			Message: message,
 		}
 	} else {
 		innerLayer = &model.OnionLayer{
@@ -430,7 +437,7 @@ func Encapsulator_func(
 	}
 
 	// encrypt layer by layer from the destination
-	forwardPayload, err := encryptOnionLayers(innerLayer, route, publicKeys)
+	forwardPayload, err := encryptOnionLayers(innerLayer, route, publicKeys, senderAddr)
 	if err != nil {
 		return "", "", fmt.Errorf("error building forward onion: %v", err)
 	}
@@ -449,6 +456,7 @@ func encryptOnionLayers(
 	innerLayer *model.OnionLayer,
 	route []string,
 	publicKeys map[string]*rsa.PublicKey,
+	senderAddr string,
 ) (string, error) {
 
 	// innerlayer to string
@@ -463,11 +471,17 @@ func encryptOnionLayers(
 	// encrypte layer by layer from the end
 	// i = len-2 just the middle nodes
 	for i := len(route) - 2; i >= 0; i-- {
+		prevNode := senderAddr
+		if i > 0 {
+			prevNode = route[i-1]
+		}
 		// build the RELAY OnionLayer
 		relayLayer := &model.OnionLayer{
-			Type:    "RELAY",
-			NextHop: route[i+1],     // next hop
-			Payload: currentPayload, // Onion encrypted of the inner layers
+			Type:  "RELAY",
+			MsgID: innerLayer.MsgID, // id of the msg
+			Next:  route[i+1],       // next hop
+			From:  prevNode,         // node before
+			Data:  currentPayload,   // Onion encrypted of the inner layers
 		}
 		relayLayerString := relayLayer.OnionlayerToString()
 
