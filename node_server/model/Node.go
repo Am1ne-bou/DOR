@@ -37,17 +37,21 @@ func DialDirectoryServer(addr string) (*tls.Conn, error) {
 	return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
 }
 
+type Nackstruct struct {
+	PrevNackID   string // id to send to the prevnode
+	PrevNodeAddr string
+}
 type Node struct {
 	ID            string
 	Port          int
 	PrivateKey    *rsa.PrivateKey
 	PublicKey     *rsa.PublicKey
 	Listener      net.Listener
-	ServerAddr    string               // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
-	NodeIP        string               // IP du nœud vue par le serveur
-	PendingACKs   map[string]chan bool // msgID  canal de notification
-	PendingRelays map[string]string    // msgID  addresse de noeud precedent pour NACK
-	Mu            sync.Mutex           // protège PendingACKs
+	ServerAddr    string                // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
+	NodeIP        string                // IP du nœud vue par le serveur
+	PendingACKs   map[string]chan bool  // msgID  canal de notification
+	PendingRelays map[string]Nackstruct // recievedNackID  Nackstruct
+	Mu            sync.Mutex            // protège PendingACKs
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -159,12 +163,12 @@ func (n *Node) handlerroutine(conn net.Conn) {
 			n.Mu.Unlock()
 			return
 		}
-		prevAddr, exists := n.PendingRelays[msgId]
+		Nack, exists := n.PendingRelays[msgId]
 		delete(n.PendingRelays, msgId)
 		n.Mu.Unlock()
 		if exists {
-			fmt.Printf("[%s] Propagating NACK for %s to %s\n", n.ID, msgId, prevAddr)
-			n.SendTo(prevAddr, fmt.Sprintf("NACK:%s", msgId))
+			fmt.Printf("[%s] Propagating NACK for %s to %s\n", n.ID, msgId, Nack.PrevNodeAddr)
+			n.SendTo(Nack.PrevNodeAddr, fmt.Sprintf("NACK:%s", Nack.PrevNackID))
 		}
 		return
 	}
@@ -219,15 +223,18 @@ func (n *Node) handlerroutine(conn net.Conn) {
 			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.Next)
 			return
 		}
+		parts := strings.Split(layer.MsgID, ":")
+		tosend := parts[0]
+		toreceive := parts[1]
 
 		n.Mu.Lock()
-		n.PendingRelays[layer.MsgID] = layer.From
+		n.PendingRelays[toreceive] = Nackstruct{PrevNackID: tosend, PrevNodeAddr: layer.From}
 		n.Mu.Unlock()
 
 		err = n.SendTo(layer.Next, layer.Data)
 		if err != nil {
 			fmt.Printf("[%s] Erreur relai: %s\n", n.ID, err)
-			n.SendTo(layer.From, fmt.Sprintf("NACK:%s", layer.MsgID))
+			n.SendTo(layer.From, fmt.Sprintf("NACK:%s", tosend))
 		}
 
 	case "FINAL":

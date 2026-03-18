@@ -34,12 +34,14 @@ func StringToOnionLayer(str string) (OnionLayer, error) {
 		Data:    parts[4],
 		Message: parts[5],
 	}
-	///fmt.Printf("Debug Serializing layer: %s\n", str) // Debug log
 	return ol, nil
 }
 
-func GenerateMsgID() string {
+func GenerateMsgID(prefix ...string) string {
 	str := "msg-"
+	if len(prefix) > 0 && prefix[0] != "" {
+		str = prefix[0] + "-"
+	}
 	for i := 0; i < 6; i++ {
 		n, _ := rand.Int(rand.Reader, big.NewInt(10))
 		str += string('0' + byte(n.Int64()))
