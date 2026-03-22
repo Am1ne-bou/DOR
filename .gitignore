@@ -11,3 +11,4 @@
 node_server/tests/logs
 node_server/tests/*.log
 node_server/tests/test*
+node_server/tests/results*
