@@ -2,13 +2,13 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-	"crypto/tls"
 
 	"project/node_server/data"
 	"project/node_server/model"
@@ -24,18 +24,18 @@ func main() {
 
 	//chargement du certificat
 	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
-    if err != nil {
-        fmt.Println("Erreur chargement certificat:", err)
-        return
-    }
-    config := &tls.Config{Certificates: []tls.Certificate{cert}}
+	if err != nil {
+		fmt.Println("Erreur chargement certificat:", err)
+		return
+	}
+	config := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-    //écoute en tls
-    listener, err := tls.Listen("tcp4", "0.0.0.0:8080", config)
-    if err != nil {
-        fmt.Println("Error listen:", err)
-        return
-    }
+	//écoute en tls
+	listener, err := tls.Listen("tcp4", "0.0.0.0:8080", config)
+	if err != nil {
+		fmt.Println("Error listen:", err)
+		return
+	}
 
 	defer func(listener net.Listener) {
 		err := listener.Close()
@@ -172,41 +172,41 @@ func handleConnection(conn net.Conn) {
 		}
 
 	case "GET_KEY":
-			// Format GET_KEY:<ip>:<port>
-			if len(parts) < 3 {
-				_, err := conn.Write([]byte("ERROR:Invalid format\n"))
+		// Format GET_KEY:<ip>:<port>
+		if len(parts) < 3 {
+			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
+			if err != nil {
+				return
+			}
+			return
+		}
+
+		ip := parts[1]
+		port, err := strconv.Atoi(parts[2])
+		if err != nil {
+			_, err := conn.Write([]byte("ERROR:Invalid port\n"))
+			if err != nil {
+				return
+			}
+			return
+		}
+
+		nodes, _ := data.GetNodesList()
+
+		for _, node := range nodes {
+			if node.Ip == ip && node.Port == port {
+				_, err := conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
 				if err != nil {
 					return
 				}
 				return
 			}
+		}
 
-			ip := parts[1]
-			port, err := strconv.Atoi(parts[2])
-			if err != nil {
-				_, err := conn.Write([]byte("ERROR:Invalid port\n"))
-				if err != nil {
-					return
-				}
-				return
-			}
-
-			nodes, _ := data.GetNodesList()
-
-			for _, node := range nodes {
-				if node.Ip == ip && node.Port == port {
-					_, err := conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
-					if err != nil {
-						return
-					}
-					return
-				}
-			}
-
-			_, err = conn.Write([]byte("ERROR:Node not found\n"))
-			if err != nil {
-				return
-			}
+		_, err = conn.Write([]byte("ERROR:Node not found\n"))
+		if err != nil {
+			return
+		}
 
 	case "QUIT":
 		// Format: QUIT:id
@@ -295,7 +295,7 @@ func TestPing() {
 				err := conn.Close()
 				if err != nil {
 					fmt.Println("Error closing connection:", err)
-					continue; //un return ici kill la go routine
+					continue //un return ici kill la go routine
 				}
 			}
 		}

@@ -234,120 +234,24 @@ func main() {
 			destAddr := subParts[1] + ":" + subParts[2] // ip:port
 			message := subParts[3]
 
-			// Recuperation de la liste des nodes
-			listStr, err := node.GetNodesList()
-			if err != nil {
-				fmt.Println("Erreur récupération liste:", err)
+			go SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, 3, 0, time.Now())
+
+		case "BENCH":
+			subParts := strings.SplitN(data, ":", 5)
+			if len(subParts) < 5 {
+				fmt.Println("Format: BENCH:<nbr_messages>:<nbr_relays>:<maxRetries>:<ip>:<port>")
 				continue
 			}
+			nbrMsg, _ := strconv.Atoi(subParts[0])
+			numRelays, _ := strconv.Atoi(subParts[1])
+			maxRetries, _ := strconv.Atoi(subParts[2])
+			destAddr := subParts[3] + ":" + subParts[4]
 
-			if listStr == "LIST:empty" {
-				fmt.Println("Aucun node disponible sur le réseau")
-				continue
+			for i := 0; i < nbrMsg; i++ {
+				msg := fmt.Sprintf("bench-msg-%d", i)
+				go SendWithRetry(node, serverAddr, destAddr, msg, numRelays, publicKeys, maxRetries, 0, time.Now())
+				time.Sleep(500 * time.Millisecond)
 			}
-
-			// Parser la réponse LIST:name|ip|port|key,name|ip|port|key,...
-			listData := strings.TrimPrefix(listStr, "LIST:")
-			entries := strings.Split(listData, ",")
-
-			var candidates []string // adresses ip:port des candidats
-			destFound := false
-			nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
-
-			for _, entry := range entries {
-				fields := strings.SplitN(entry, "|", 4)
-				if len(fields) < 4 {
-					continue
-				}
-				ip := fields[1]
-				port := fields[2]
-				addr := ip + ":" + port
-
-				if addr == destAddr {
-					destFound = true
-				}
-				// Exclude this node and the destination from relay candidates
-				if addr != nodeAddr && addr != destAddr {
-					candidates = append(candidates, addr)
-				}
-			}
-			if !destFound {
-				//fmt.Printf("Destination %s introuvable dans le réseau\n", destAddr)
-				//continue
-			}
-
-			// Select relays
-			if numRelays > len(candidates) {
-				numRelays = len(candidates)
-			}
-			if numRelays == 0 {
-				fmt.Println("Pas assez de nodes pour construire une route (besoin d'au moins 1 relais)")
-				continue
-			}
-
-			// Shuffle candidates
-			for i := len(candidates) - 1; i > 0; i-- {
-				j := mrand.Intn(i + 1)
-				candidates[i], candidates[j] = candidates[j], candidates[i]
-			}
-
-			relays := candidates[:numRelays]
-
-			// Build the route forward : [relays..., dest]
-			route := append(relays, destAddr)
-			fmt.Printf("Route forward : %v\n", route)
-
-			// Build the return route inverse of the forward
-			var returnRoute []string
-			for i := len(relays) - 1; i >= 0; i-- {
-				returnRoute = append(returnRoute, relays[i])
-			}
-			returnRoute = append(returnRoute, nodeAddr)
-			fmt.Printf("Route retour:  %v\n", returnRoute)
-
-			// Encapsulate in onion layers and send to the first node
-			onion, msgID, firstNackID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr, nodeAddr)
-			if err != nil {
-				fmt.Println("Erreur encapsulation:", err)
-				continue
-			}
-
-			// save in the chanel before sending
-			ackChan := make(chan bool, 1)
-			node.Mu.Lock()
-			node.PendingACKs[msgID] = ackChan
-			node.PendingACKs[firstNackID] = ackChan
-			node.Mu.Unlock()
-
-			err = node.SendTo(route[0], onion)
-			if err != nil {
-				fmt.Println("Erreur envoi:", err)
-				node.Mu.Lock()
-				delete(node.PendingACKs, msgID)
-				node.Mu.Unlock()
-				continue
-			}
-
-			fmt.Printf("Message envoyé (msgID: %s), attente ACK...\n\n", msgID)
-
-			// Goroutine to wait for the ACK with timeout
-			go func(id string, nackID string, ch chan bool) {
-				select {
-				case success := <-ch:
-					if success {
-						fmt.Printf("ACK confirmé pour %s\n\n", id)
-					} else {
-						fmt.Printf("NACK reçu pour %s — le message n'a pas pu être transmis\n\n", id)
-					}
-				case <-time.After(time.Second * 10):
-					// timeout
-					fmt.Printf("Timeout du ACK pour %s\n\n", id)
-					node.Mu.Lock()
-					delete(node.PendingACKs, id)
-					delete(node.PendingACKs, nackID)
-					node.Mu.Unlock()
-				}
-			}(msgID, firstNackID, ackChan)
 
 		////
 		case "LIST":
@@ -368,6 +272,155 @@ func main() {
 			fmt.Println("Unknown command. Use MSG or RELAY.")
 		}
 	}
+}
+
+func SendWithRetry(
+	node *model.Node,
+	serverAddr string,
+	destAddr string,
+	message string,
+	numRelays int,
+	publicKeys map[string]*rsa.PublicKey,
+	maxRetries int,
+	currentTry int,
+	startTime time.Time,
+) {
+
+	if currentTry >= maxRetries {
+		fmt.Printf("Abandon après %d tentatives pour %s\n\n", maxRetries, destAddr)
+		elapsed := time.Since(startTime).Milliseconds()
+		fmt.Printf("RESULT|%s|ABANDON|%d|%dms\n", destAddr, maxRetries, elapsed)
+		return
+	}
+
+	if currentTry > 0 {
+		fmt.Printf("Retry %d/%d pour %s\n", currentTry, maxRetries, destAddr)
+	}
+	// Recuperation de la liste des nodes
+	listStr, err := node.GetNodesList()
+	if err != nil {
+		fmt.Println("Erreur récupération liste:", err)
+		return
+	}
+
+	if listStr == "LIST:empty" {
+		fmt.Println("Aucun node disponible sur le réseau")
+		return
+	}
+
+	// Parser la réponse LIST:name|ip|port|key,name|ip|port|key,...
+	listData := strings.TrimPrefix(listStr, "LIST:")
+	entries := strings.Split(listData, ",")
+
+	var candidates []string // adresses ip:port des candidats
+	destFound := false
+	nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
+
+	for _, entry := range entries {
+		fields := strings.SplitN(entry, "|", 4)
+		if len(fields) < 4 {
+			continue
+		}
+		ip := fields[1]
+		port := fields[2]
+		addr := ip + ":" + port
+
+		if addr == destAddr {
+			destFound = true
+		}
+		// Exclude this node and the destination from relay candidates
+		if addr != nodeAddr && addr != destAddr {
+			candidates = append(candidates, addr)
+		}
+	}
+	if !destFound {
+		//fmt.Printf("Destination %s introuvable dans le réseau\n", destAddr)
+		//continue
+	}
+
+	// Select relays
+	if numRelays > len(candidates) {
+		numRelays = len(candidates)
+	}
+	if numRelays == 0 {
+		fmt.Println("Pas assez de nodes pour construire une route (besoin d'au moins 1 relais)")
+		return
+	}
+
+	// Shuffle candidates
+	for i := len(candidates) - 1; i > 0; i-- {
+		j := mrand.Intn(i + 1)
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	}
+
+	relays := candidates[:numRelays]
+
+	// Build the route forward : [relays..., dest]
+	route := append(relays, destAddr)
+	fmt.Printf("Route forward : %v\n", route)
+
+	// Build the return route inverse of the forward
+	var returnRoute []string
+	for i := len(relays) - 1; i >= 0; i-- {
+		returnRoute = append(returnRoute, relays[i])
+	}
+	returnRoute = append(returnRoute, nodeAddr)
+	fmt.Printf("Route retour:  %v\n", returnRoute)
+
+	// Encapsulate in onion layers and send to the first node
+	onion, msgID, firstNackID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr, nodeAddr)
+	if err != nil {
+		fmt.Println("Erreur encapsulation:", err)
+		return
+	}
+
+	// save in the chanel before sending
+	ackChan := make(chan bool, 1)
+	node.Mu.Lock()
+	node.PendingACKs[msgID] = ackChan
+	node.PendingACKs[firstNackID] = ackChan
+	node.Mu.Unlock()
+
+	err = node.SendTo(route[0], onion)
+	if err != nil {
+		fmt.Println("Erreur envoi:", err)
+		node.Mu.Lock()
+		delete(node.PendingACKs, msgID)
+		node.Mu.Unlock()
+		SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
+		return
+	}
+
+	fmt.Printf("Message envoyé (msgID: %s), attente ACK...\n\n", msgID)
+
+	// Goroutine to wait for the ACK with timeout
+	go func(id string, nackID string, ch chan bool) {
+		select {
+		case success := <-ch:
+			elapsed := time.Since(startTime).Milliseconds()
+			if success {
+				fmt.Printf("ACK confirmé pour %s\n\n", id)
+				fmt.Printf("RESULT|%s|ACK|%d|%dms\n", destAddr, currentTry, elapsed)
+			} else {
+				fmt.Printf("NACK reçu pour %s — retry...\n\n", msgID)
+				node.Mu.Lock()
+				delete(node.PendingACKs, msgID)
+				delete(node.PendingACKs, firstNackID)
+				node.Mu.Unlock()
+				SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
+			}
+		case <-time.After(time.Second * 3):
+			elapsed := time.Since(startTime).Milliseconds()
+			fmt.Printf("RESULT|%s|TIMEOUT|%d|%dms\n", destAddr, currentTry, elapsed)
+			// timeout
+			fmt.Printf("Timeout du ACK pour %s\n\n", id)
+			node.Mu.Lock()
+			delete(node.PendingACKs, id)
+			delete(node.PendingACKs, nackID)
+			node.Mu.Unlock()
+		}
+	}(msgID, firstNackID, ackChan)
+
 }
 
 // Encapsulator_func wraps the message in multiple encryption layers
