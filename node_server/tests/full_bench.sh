@@ -1,25 +1,14 @@
 #!/bin/bash
 # =============================================================================
-# DOR Full Benchmark
+# DOR Full Benchmark - Multi-sender + latency
 #
-# Usage: ./full_bench.sh <nb_relais> <kill_interval> <dead_time>
-# Exemple: ./full_bench.sh 5 3 5
-#
-# Fait exactement ce que tu fais manuellement:
-# 1. Lance benchmark.sh
-# 2. Lance sender avec maxRetries=3, tape BENCH
-# 3. Attend les résultats
-# 4. Kill tout
-# 5. Relance benchmark.sh
-# 6. Lance sender avec maxRetries=1, tape BENCH
-# 7. Attend les résultats
-# 8. Kill tout
-# 9. Analyse
+# Usage: ./full_bench.sh <nb_relais> <kill_interval> <dead_time> [output_dir]
+# Env:   SIM_LATENCY=80 NBR_SENDERS=3 NBR_MESSAGES=100 MAX_KILLS=3 ./full_bench.sh 20 3 8
 # =============================================================================
 
 if [ $# -lt 3 ]; then
-    echo "Usage: ./full_bench.sh <nb_relais> <kill_interval> <dead_time>"
-    echo "Exemple: ./full_bench.sh 5 3 5"
+    echo "Usage: ./full_bench.sh <nb_relais> <kill_interval> <dead_time> [output_dir]"
+    echo "Env: SIM_LATENCY=80 NBR_SENDERS=3 MAX_KILLS=3 ./full_bench.sh 20 3 8"
     exit 1
 fi
 
@@ -29,12 +18,17 @@ DEAD_TIME=$3
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_DIR="$SCRIPT_DIR/../node"
-CONFIG_NAME="${NB_RELAIS}_${KILL_INT}_${DEAD_TIME}"
+# Configurable via variables d'environnement
+NBR_MESSAGES=${NBR_MESSAGES:-100}
+NBR_RELAYS_ROUTE=${NBR_RELAYS_ROUTE:-3}
+NBR_SENDERS=${NBR_SENDERS:-1}
+MAX_KILLS=${MAX_KILLS:-1}
+SIM_LATENCY=${SIM_LATENCY:-0}
+
+CONFIG_NAME="${NB_RELAIS}r_${KILL_INT}k_${DEAD_TIME}d_${MAX_KILLS}mk_${NBR_SENDERS}s_${SIM_LATENCY}ms"
+
 BASE_DIR=${4:-$SCRIPT_DIR}
 OUTPUT_DIR="$BASE_DIR/$CONFIG_NAME"
-
-NBR_MESSAGES=300
-NBR_RELAYS_ROUTE=3
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -43,11 +37,10 @@ kill_everything() {
     pkill -f "go run serveur.go" 2>/dev/null
     pkill -f "__go_build" 2>/dev/null
     pkill -f "relay-" 2>/dev/null
-    pkill -f "bench-" 2>/dev/null
+    pkill -f "bench-sender" 2>/dev/null
     pkill -f "node-receiver" 2>/dev/null
     fuser -k 8080/tcp 2>/dev/null
     sleep 8
-    # tuer tout ce qui reste
     pkill -f "relay-" 2>/dev/null
     pkill -f "bench-" 2>/dev/null
     fuser -k 8080/tcp 2>/dev/null
@@ -76,85 +69,92 @@ run_one() {
     local LABEL=$3
 
     echo ""
-    echo "--- $LABEL (maxRetries=$MAX_RETRIES) ---"
+    echo "--- $LABEL (maxRetries=$MAX_RETRIES, senders=$NBR_SENDERS, latency=${SIM_LATENCY}ms) ---"
 
-    # Vider le log
     > "$LOG_FILE"
 
-    # Kill tout avant de commencer
     kill_everything
 
-    # Lancer benchmark.sh (serveur + receiver + relais + chaos)
+    # Lancer benchmark.sh
     BENCH_LOG="/tmp/dor_bench_output_$$.log"
     > "$BENCH_LOG"
-    "$SCRIPT_DIR/benchmark.sh" $NB_RELAIS $KILL_INT $DEAD_TIME > "$BENCH_LOG" 2>&1 &
+    SIM_LATENCY=$SIM_LATENCY "$SCRIPT_DIR/benchmark.sh" $NB_RELAIS $KILL_INT $DEAD_TIME $MAX_KILLS > "$BENCH_LOG" 2>&1 &
     BENCH_PID=$!
 
-    # Attendre le receiver
     echo "  Attente du receiver..."
     RECEIVER_ADDR=$(wait_for_receiver "$BENCH_LOG")
     if [ -z "$RECEIVER_ADDR" ]; then
         echo "  ERREUR: Receiver pas trouvé"
-        cat "$BENCH_LOG"
         kill $BENCH_PID 2>/dev/null
         kill_everything
         return 1
     fi
     echo "  Receiver: $RECEIVER_ADDR"
 
-    # Attendre que le chaos fasse des dégâts
-    echo "  Attente 20s pour que le chaos s'installe..."
+    echo "  Attente 20s pour le chaos..."
     sleep 20
 
-    # Lancer le sender avec BENCH
+    # Lancer les senders
     BENCH_CMD="BENCH:${NBR_MESSAGES}:${NBR_RELAYS_ROUTE}:${MAX_RETRIES}:${RECEIVER_ADDR}"
-    echo "  Sender: $BENCH_CMD"
+    echo "  Commande: $BENCH_CMD x $NBR_SENDERS senders"
 
-    cd "$NODE_DIR"
-    (sleep 2 && echo "$BENCH_CMD" && sleep infinity) | go run main.go bench-sender > "$LOG_FILE" 2>&1 &
-    SENDER_PID=$!
-    cd "$SCRIPT_DIR"
+    SENDER_PIDS=()
+    for s in $(seq 1 $NBR_SENDERS); do
+        cd "$NODE_DIR"
+        (sleep 2 && echo "$BENCH_CMD" && sleep infinity) | SIM_LATENCY=$SIM_LATENCY go run main.go bench-sender-$s > "${LOG_FILE}.${s}" 2>&1 &
+        SENDER_PIDS+=($!)
+        cd "$SCRIPT_DIR"
+        sleep 1
+    done
 
-    # Attendre les résultats
-    MAX_WAIT=180
+    # Attendre les résultats (total = NBR_MESSAGES * NBR_SENDERS)
+    TOTAL_EXPECTED=$((NBR_MESSAGES * NBR_SENDERS))
+    MAX_WAIT=300
     ELAPSED=0
     while [ $ELAPSED -lt $MAX_WAIT ]; do
         sleep 5
         ELAPSED=$((ELAPSED + 5))
-        NB_RESULTS=$(grep -c "^RESULT|" "$LOG_FILE" 2>/dev/null || echo "0")
-        if [ "$NB_RESULTS" -ge "$NBR_MESSAGES" ]; then
+        # Compter les résultats de tous les senders
+        NB_RESULTS=0
+        for s in $(seq 1 $NBR_SENDERS); do
+            R=$(grep -c "^RESULT|" "${LOG_FILE}.${s}" 2>/dev/null || echo "0")
+            NB_RESULTS=$((NB_RESULTS + R))
+        done
+        if [ "$NB_RESULTS" -ge "$TOTAL_EXPECTED" ]; then
             break
         fi
     done
-    echo "  $NB_RESULTS/$NBR_MESSAGES résultats en ${ELAPSED}s"
+    echo "  $NB_RESULTS/$TOTAL_EXPECTED résultats en ${ELAPSED}s"
 
-    # Kill tout
-    kill $SENDER_PID 2>/dev/null
+    # Merge les logs
+    cat "${LOG_FILE}".* > "$LOG_FILE" 2>/dev/null
+    rm -f "${LOG_FILE}".* 2>/dev/null
+
+    # Cleanup
+    for pid in "${SENDER_PIDS[@]}"; do
+        kill $pid 2>/dev/null
+    done
     kill $BENCH_PID 2>/dev/null
     kill_everything
 
     echo "  $LABEL terminé"
 }
 
-# =============================================================================
-# MAIN
-# =============================================================================
+# === MAIN ===
 
 echo "=============================================="
 echo "  DOR Benchmark: $CONFIG_NAME"
 echo "  $(date)"
-echo "  $NB_RELAIS relais, kill=${KILL_INT}s, dead=${DEAD_TIME}s"
+echo "  Relais=$NB_RELAIS Kill=${KILL_INT}s Dead=${DEAD_TIME}s"
+echo "  Senders=$NBR_SENDERS Msg/sender=$NBR_MESSAGES MaxKills=$MAX_KILLS Latency=${SIM_LATENCY}ms"
 echo "=============================================="
 
-# Run 1: AVEC retry
 WITH_LOG="$SCRIPT_DIR/sender_with_retry.log"
 run_one 3 "$WITH_LOG" "AVEC RETRY"
 
-# Run 2: SANS retry
 WITHOUT_LOG="$SCRIPT_DIR/sender_without_retry.log"
 run_one 1 "$WITHOUT_LOG" "SANS RETRY"
 
-# Analyse
 echo ""
 echo "=== ANALYSE ==="
 "$SCRIPT_DIR/run_analysis.sh" "$OUTPUT_DIR" "$WITH_LOG" "$WITHOUT_LOG"

@@ -1,29 +1,32 @@
 #!/bin/bash
-
 # === CONFIG ===
-N_RELAYS=${1:-6}         # nombre de relais (defaut 6)
-KILL_INTERVAL=${2:-5}    # kill toutes les X secondes (defaut 5)
+N_RELAYS=${1:-6}
+KILL_INTERVAL=${2:-5}
 DEATH_TIME=${3:-2}
+MAX_KILLS=${4:-1}
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_DIR="$SCRIPT_DIR/../List_Serveur"
 NODE_DIR="$SCRIPT_DIR/../node"
 LOG_DIR="$SCRIPT_DIR/logs"
+SIM_LATENCY=${SIM_LATENCY:-0}
 
-# === CLEANUP ===
 mkdir -p $LOG_DIR
 rm -f $LOG_DIR/*.log
 
-# Kill tout ce qui reste d'un ancien test
-pkill -f "go run main.go node-" 2>/dev/null
+pkill -f "relay-" 2>/dev/null
+pkill -f "bench-" 2>/dev/null
+pkill -f "node-receiver" 2>/dev/null
+pkill -f "__go_build" 2>/dev/null
 pkill -f "go run serveur.go" 2>/dev/null
-sleep 1
+fuser -k 8080/tcp 2>/dev/null
+sleep 3
 
 echo "=== DOR Benchmark ==="
-echo "Relais: $N_RELAYS"
-echo "Kill interval: ${KILL_INTERVAL}s"
+echo "Relais: $N_RELAYS | Kill: ${KILL_INTERVAL}s | Dead: ${DEATH_TIME}s | MaxKills: $MAX_KILLS | Latency: ${SIM_LATENCY}ms"
 echo ""
 
-# === 1. LANCER LE SERVEUR ===
+# === SERVEUR ===
 echo "[1] Lancement du serveur..."
 cd $SERVER_DIR
 sleep infinity | go run serveur.go > $LOG_DIR/server.log 2>&1 &
@@ -32,67 +35,52 @@ cd - > /dev/null
 sleep 2
 
 if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo "ERREUR: Le serveur n'a pas démarré. Vérifie $LOG_DIR/server.log"
+    echo "ERREUR: Serveur pas démarré"
     exit 1
 fi
-echo "    Serveur lancé (PID: $SERVER_PID)"
+echo "    Serveur OK"
 
-# === 2. LANCER LE RECEIVER (protégé, jamais kill) ===
-echo "[2] Lancement du receiver (node-receiver)..."
+# === RECEIVER ===
+echo "[2] Lancement du receiver..."
 cd $NODE_DIR
-sleep infinity | go run main.go node-receiver > $LOG_DIR/node-receiver.log 2>&1 &
+sleep infinity | SIM_LATENCY=$SIM_LATENCY go run main.go node-receiver > $LOG_DIR/node-receiver.log 2>&1 &
 RECEIVER_PID=$!
 cd - > /dev/null
 sleep 2
 
-# Extraire le port du receiver depuis ses logs
 RECEIVER_PORT=$(grep -oP 'Started in port : \K[0-9]+' $LOG_DIR/node-receiver.log)
+RECEIVER_IP=$(grep -oP 'IP: \K[0-9.]+' $LOG_DIR/node-receiver.log)
+RECEIVER_IP=${RECEIVER_IP:-127.0.0.1}
 
 if [ -z "$RECEIVER_PORT" ]; then
-    echo "ERREUR: Port du receiver pas trouvé. Vérifie $LOG_DIR/node-receiver.log"
+    echo "ERREUR: Receiver pas trouvé"
     kill $SERVER_PID 2>/dev/null
     exit 1
 fi
 
-# Extraire l'IP du receiver
-RECEIVER_IP=$(grep -oP 'IP: \K[0-9.]+' $LOG_DIR/node-receiver.log)
-if [ -z "$RECEIVER_IP" ]; then
-    RECEIVER_IP="127.0.0.1"
-fi
-
-echo "    Receiver lancé (PID: $RECEIVER_PID)"
 echo ""
 echo "=========================================="
 echo "  RECEIVER: $RECEIVER_IP:$RECEIVER_PORT"
 echo "=========================================="
 echo ""
 
-# === 3. LANCER LES RELAIS ===
+# === RELAIS ===
 echo "[3] Lancement de $N_RELAYS relais..."
 RELAY_PIDS=()
 for i in $(seq 1 $N_RELAYS); do
     cd $NODE_DIR
-    sleep infinity | go run main.go relay-$i > $LOG_DIR/relay-$i.log 2>&1 &
+    sleep infinity | SIM_LATENCY=$SIM_LATENCY go run main.go relay-$i > $LOG_DIR/relay-$i.log 2>&1 &
     RELAY_PIDS+=($!)
     cd - > /dev/null
     sleep 1
-    echo "    relay-$i lancé (PID: ${RELAY_PIDS[$i-1]})"
+    echo "    relay-$i OK"
 done
 
 echo ""
-echo "[4] Tous les noeuds sont lancés."
-echo "    Lance TON node dans un autre terminal:"
-echo ""
-echo "    cd $NODE_DIR && go run main.go mon-node"
-echo ""
-echo "    Puis envoie avec:"
-echo "    SEND:3:$RECEIVER_IP:$RECEIVER_PORT:hello"
-echo "    ou BENCH:50:3:$RECEIVER_IP:$RECEIVER_PORT"
-echo ""
-echo "[5] Début du chaos dans 10s... (Ctrl+C pour tout arrêter)"
+echo "[4] Chaos dans 10s..."
 sleep 10
 
-# === 4. KILL LOOP ===
+# === KILL LOOP ===
 cleanup() {
     echo ""
     echo "=== Nettoyage ==="
@@ -101,8 +89,9 @@ cleanup() {
     for pid in "${RELAY_PIDS[@]}"; do
         kill $pid 2>/dev/null
     done
-    echo "Tous les process arrêtés."
-    echo "Logs dans $LOG_DIR/"
+    pkill -f "relay-" 2>/dev/null
+    pkill -f "__go_build" 2>/dev/null
+    echo "Process arrêtés."
     exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -110,22 +99,27 @@ trap cleanup SIGINT SIGTERM
 while true; do
     sleep $KILL_INTERVAL
 
-    # Pick un relai random
-    INDEX=$((RANDOM % N_RELAYS))
-    VICTIM_NAME="relay-$((INDEX + 1))"
-    VICTIM_PID=${RELAY_PIDS[$INDEX]}
-
-    # Vérifie si le process est encore vivant
-    if kill -0 $VICTIM_PID 2>/dev/null; then
-        echo "[$(date +%H:%M:%S)] KILL $VICTIM_NAME (PID: $VICTIM_PID)"
+    NB_KILLS=$((RANDOM % MAX_KILLS + 1))
+    KILLED=()
+    for k in $(seq 1 $NB_KILLS); do
+        INDEX=$((RANDOM % N_RELAYS))
+        VICTIM_NAME="relay-$((INDEX + 1))"
+        if [[ " ${KILLED[@]} " =~ " $INDEX " ]]; then
+            continue
+        fi
+        KILLED+=($INDEX)
         pkill -f "$VICTIM_NAME" 2>/dev/null
-    fi
+        echo "[$(date +%H:%M:%S)] KILL $VICTIM_NAME"
+    done
+
     sleep $DEATH_TIME
 
-    # Relance
-    cd $NODE_DIR
-    sleep infinity | go run main.go $VICTIM_NAME > $LOG_DIR/$VICTIM_NAME.log 2>&1 &
-    RELAY_PIDS[$INDEX]=$!
-    cd - > /dev/null
-    echo "[$(date +%H:%M:%S)] RELAUNCHED $VICTIM_NAME (PID: ${RELAY_PIDS[$INDEX]})"
+    for INDEX in "${KILLED[@]}"; do
+        VICTIM_NAME="relay-$((INDEX + 1))"
+        cd $NODE_DIR
+        sleep infinity | SIM_LATENCY=$SIM_LATENCY go run main.go $VICTIM_NAME > $LOG_DIR/$VICTIM_NAME.log 2>&1 &
+        RELAY_PIDS[$INDEX]=$!
+        cd - > /dev/null
+        echo "[$(date +%H:%M:%S)] RELAUNCHED $VICTIM_NAME"
+    done
 done

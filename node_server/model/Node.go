@@ -13,9 +13,13 @@ import (
 	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n, idem pour ":")
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 //ATTENTION LA LIGNE EN DESSOUS N'EST PAS UN COMMENTAIRE
@@ -263,12 +267,19 @@ func (n *Node) handlerroutine(conn net.Conn) {
 }
 
 func (n *Node) SendTo(targetAddr string, message string) error {
+	// Simuler la latence si configuré
+	if simLatency := os.Getenv("SIM_LATENCY"); simLatency != "" {
+		maxMs, _ := strconv.Atoi(simLatency)
+		if maxMs > 0 {
+			delay := time.Duration(10+mrand.Intn(maxMs)) * time.Millisecond
+			time.Sleep(delay)
+		}
+	}
 
 	conn, err := net.Dial("tcp", targetAddr)
 	if err != nil {
 		return err
 	}
-
 	defer conn.Close()
 
 	_, err = conn.Write([]byte(message + "\n"))

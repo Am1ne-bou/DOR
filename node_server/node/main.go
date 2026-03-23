@@ -409,7 +409,7 @@ func SendWithRetry(
 				node.Mu.Unlock()
 				SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
 			}
-		case <-time.After(time.Second * 3):
+		case <-time.After(time.Second * 8):
 			elapsed := time.Since(startTime).Milliseconds()
 			fmt.Printf("RESULT|%s|TIMEOUT|%d|%dms\n", destAddr, currentTry, elapsed)
 			// timeout
@@ -426,7 +426,7 @@ func SendWithRetry(
 // Encapsulator_func wraps the message in multiple encryption layers
 func Encapsulator_func(
 	message string,
-	route []string,       // [R1, R2, dest]
+	route []string, // [R1, R2, dest]
 	returnRoute []string, // [R2, R1, sender] — nil si pas de ACK
 	publicKeys map[string]*rsa.PublicKey,
 	serverAddr string,
