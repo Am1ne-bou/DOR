@@ -165,6 +165,25 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
+	case "UPDATE_KEY":
+		// Format: UPDATE_KEY:id:key
+		if len(parts) < 3 {
+			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
+			if err != nil {
+				return
+			}
+			return
+		}
+		id := parts[1]
+		key := parts[2]
+
+		err := data.UpdateNodeKey(id, key)
+		if err != nil {
+			fmt.Println("Error updating node key:", err)
+		} else {
+			fmt.Printf("[+] Node %s key updated\n", id)
+		}
+
 	case "GET_LIST":
 		_, err := conn.Write([]byte(getNodesList()))
 		if err != nil {

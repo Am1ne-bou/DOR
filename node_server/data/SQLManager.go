@@ -124,6 +124,11 @@ func getAddr(nodeId string) (string, error) {
 	return out, nil
 }
 
+func UpdateNodeKey(name string, newKey string) error {
+	_, err := Db.Exec("UPDATE nodes SET publicKey = ? WHERE name = ?", newKey, name)
+	return err
+}
+
 func RemoveNode(nodeID string) error {
 
 	_, err := Db.Exec("DELETE FROM nodes WHERE name = ?", nodeID)
