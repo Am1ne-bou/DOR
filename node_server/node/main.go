@@ -30,6 +30,10 @@ func NewNode(id string, serverAddr string) (*model.Node, error) {
 	publicKey := privateKey.PublicKey
 
 	addr := fmt.Sprintf("0.0.0.0:%d", 0)
+	os_port := os.Getenv("PORT")
+	if os_port != "" {
+		addr = fmt.Sprintf("0.0.0.0:%s", os_port)
+	}
 	listener, err := net.Listen("tcp4", addr)
 	if err != nil {
 		return nil, err
