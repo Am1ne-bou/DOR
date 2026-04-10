@@ -1,0 +1,13 @@
+smartphone_2G=0
+server=0
+laptop_WIFI5=3
+
+# RAM
+smartphone_2G_RAM="128m"
+server_RAM="1g"
+laptop_WIFI5_RAM="512m"
+
+# CPU
+smartphone_2G_CPU="0.2"
+server_CPU="1.0"
+laptop_WIFI5_CPU="0.5"

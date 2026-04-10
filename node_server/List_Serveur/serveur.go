@@ -142,7 +142,10 @@ func handleConnection(conn net.Conn) {
 		key := parts[3]
 
 		ip_string := conn.RemoteAddr().String()
-		host, _, _ := net.SplitHostPort(ip_string)
+		host := os.Getenv("NODE_ADDR")
+		if host == "" {
+			host, _, _ = net.SplitHostPort(ip_string)
+		}
 
 		info := model.NodeInfo{
 			Uuid:      uuid.New().String(),
