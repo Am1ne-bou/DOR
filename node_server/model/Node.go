@@ -50,6 +50,7 @@ type Node struct {
 	Port          int
 	PrivateKey    *rsa.PrivateKey
 	PublicKey     *rsa.PublicKey
+	KeyMu         sync.RWMutex          // protège PrivateKey et PublicKey
 	Listener      net.Listener
 	ServerAddr    string                // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
 	NodeIP        string                // IP du nœud vue par le serveur
@@ -148,7 +149,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 
 	line = strings.TrimSpace(line)
 	if line == "GET_PUBKEY" {
+		n.KeyMu.RLock()
 		pubBytes, _ := x509.MarshalPKIXPublicKey(n.PublicKey)
+		n.KeyMu.RUnlock()
 		pubBase64 := base64.StdEncoding.EncodeToString(pubBytes)
 		conn.Write([]byte(pubBase64 + "\n"))
 		return
@@ -189,7 +192,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		return
 	}
 
+	n.KeyMu.RLock()
 	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, n.PrivateKey, encKey, nil)
+	n.KeyMu.RUnlock()
 	if err != nil {
 		fmt.Println("Erreur déchiffrement RSA (Clé AES)")
 		return
@@ -314,7 +319,9 @@ func (n *Node) JoinServerList(addrlist string) error {
 	//Pr envoyer la clé publique sur le réseau (format "reconnu" partout)
 	// on utilise le format PKIX (encodage en ASN.1 DER).
 	//on appelle cette etape la serialisation
+	n.KeyMu.RLock()
 	pubBytes, err := x509.MarshalPKIXPublicKey(n.PublicKey)
+	n.KeyMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("erreur sérialisation clé: %v", err)
 	}
@@ -347,4 +354,38 @@ func (n *Node) JoinServerList(addrlist string) error {
 	}
 
 	return fmt.Errorf("registration failed: %s", response)
+}
+
+func (n *Node) RegenerateKeys() error {
+	newPriv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+	newPub := newPriv.PublicKey
+
+	pubBytes, err := x509.MarshalPKIXPublicKey(&newPub)
+	if err != nil {
+		return err
+	}
+	pubBase64 := base64.StdEncoding.EncodeToString(pubBytes)
+
+	n.KeyMu.Lock()
+	n.PrivateKey = newPriv
+	n.PublicKey = &newPub
+	n.KeyMu.Unlock()
+
+	conn, err := DialDirectoryServer(n.ServerAddr)
+	if err != nil {
+		return fmt.Errorf("erreur de connexion à l'annuaire: %v", err)
+	}
+	defer conn.Close()
+
+	msg := fmt.Sprintf("UPDATE_KEY:%s:%s\n", n.ID, pubBase64)
+	_, err = conn.Write([]byte(msg))
+	if err != nil {
+		return fmt.Errorf("erreur d'envoi à l'annuaire: %v", err)
+	}
+
+	fmt.Printf("[%s] Clé RSA régénérée et envoyée à l'annuaire.\n", n.ID)
+	return nil
 }

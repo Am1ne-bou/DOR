@@ -30,6 +30,10 @@ func NewNode(id string, serverAddr string) (*model.Node, error) {
 	publicKey := privateKey.PublicKey
 
 	addr := fmt.Sprintf("0.0.0.0:%d", 0)
+	os_port := os.Getenv("PORT")
+	if os_port != "" {
+		addr = fmt.Sprintf("0.0.0.0:%s", os_port)
+	}
 	listener, err := net.Listen("tcp4", addr)
 	if err != nil {
 		return nil, err
@@ -81,8 +85,13 @@ func FetchKeyFromServer(addr string, serverAddr string) (*rsa.PublicKey, error) 
 	return pubKey.(*rsa.PublicKey), nil
 }
 
+type CachedKey struct {
+	Key       *rsa.PublicKey
+	ExpiresAt time.Time
+}
+
 func main() {
-	publicKeys := make(map[string]*rsa.PublicKey)
+	publicKeys := make(map[string]CachedKey)
 
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: go run main.go <id>")
@@ -114,6 +123,7 @@ func main() {
 	fmt.Println("  MSG:<ip>:<port>:<message>                      - Message direct")
 	fmt.Println("  RELAY:<ip>:<port>,<ip>:<port>,...,<message>    - Relai multi-hop (route manuelle)")
 	fmt.Println("  SEND:<nbr>:<ip>:<port>:<message>              - Envoi auto (route aléatoire)")
+	fmt.Println("  REGEN:                                         - Régénère la clé RSA du noeud")
 	fmt.Println("  QUIT:                                          - Quitter")
 	fmt.Println("  LIST:                                          - Afficher la liste des noeuds enregistrés")
 	fmt.Println()
@@ -161,7 +171,10 @@ func main() {
 
 			// on peut ensuite la stoquer dans le dico annuaire port -> clé pub
 			if pubKey, ok := pubKeyInterface.(*rsa.PublicKey); ok {
-				publicKeys[targetAddr] = pubKey
+				publicKeys[targetAddr] = CachedKey{
+					Key:       pubKey,
+					ExpiresAt: time.Now().Add(30 * time.Second),
+				}
 				fmt.Printf("Enregistrement de la clé (publique) de %s réalisé avec succès!\n", targetAddr)
 			}
 
@@ -263,6 +276,12 @@ func main() {
 			}
 		/////
 
+		case "REGEN":
+			err := node.RegenerateKeys()
+			if err != nil {
+				fmt.Println("Erreur lors de la régénération:", err)
+			}
+
 		case "QUIT":
 			fmt.Println("Shutting down node...")
 			node.Stop()
@@ -280,7 +299,7 @@ func SendWithRetry(
 	destAddr string,
 	message string,
 	numRelays int,
-	publicKeys map[string]*rsa.PublicKey,
+	publicKeys map[string]CachedKey,
 	maxRetries int,
 	currentTry int,
 	startTime time.Time,
@@ -428,7 +447,7 @@ func Encapsulator_func(
 	message string,
 	route []string, // [R1, R2, dest]
 	returnRoute []string, // [R2, R1, sender] — nil si pas de ACK
-	publicKeys map[string]*rsa.PublicKey,
+	publicKeys map[string]CachedKey,
 	serverAddr string,
 	senderAddr string,
 ) (string, string, string, error) { // data,msgid,firstNackId,err
@@ -439,13 +458,21 @@ func Encapsulator_func(
 		allNodes = append(allNodes, returnRoute...)
 	}
 	for _, port := range allNodes {
-		if _, ok := publicKeys[port]; !ok {
-			fmt.Println("Key not found searching for it ...")
+		cached, ok := publicKeys[port]
+		if !ok || time.Now().After(cached.ExpiresAt) {
+			if !ok {
+				fmt.Println("Key not found searching for it ...")
+			} else {
+				fmt.Println("Key expired, searching for it ...")
+			}
 			key, err := FetchKeyFromServer(port, serverAddr)
 			if err != nil {
 				return "", "", "", fmt.Errorf("error fetching public key for %s: %v", port, err)
 			}
-			publicKeys[port] = key
+			publicKeys[port] = CachedKey{
+				Key:       key,
+				ExpiresAt: time.Now().Add(30 * time.Second),
+			}
 			fmt.Println("Found public key for ", port)
 		}
 	}
@@ -518,7 +545,7 @@ func Encapsulator_func(
 func encryptOnionLayers(
 	innerLayer *model.OnionLayer,
 	route []string,
-	publicKeys map[string]*rsa.PublicKey,
+	publicKeys map[string]CachedKey,
 	senderAddr string,
 	nackArray []string,
 ) (string, error) {
@@ -527,7 +554,7 @@ func encryptOnionLayers(
 	innerLayerString := innerLayer.OnionlayerToString()
 
 	// encrypte the last node
-	currentPayload, err := encryptForNode([]byte(innerLayerString), publicKeys[route[len(route)-1]])
+	currentPayload, err := encryptForNode([]byte(innerLayerString), publicKeys[route[len(route)-1]].Key)
 	if err != nil {
 		return "", err
 	}
@@ -549,7 +576,7 @@ func encryptOnionLayers(
 		}
 		relayLayerString := relayLayer.OnionlayerToString()
 
-		currentPayload, err = encryptForNode([]byte(relayLayerString), publicKeys[route[i]])
+		currentPayload, err = encryptForNode([]byte(relayLayerString), publicKeys[route[i]].Key)
 		if err != nil {
 			return "", err
 		}
