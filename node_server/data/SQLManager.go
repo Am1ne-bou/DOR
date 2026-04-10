@@ -8,14 +8,14 @@ import (
 
 	"project/node_server/model"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 var Db *sql.DB = nil
 
 func Connect(path string) error {
 
-	db, err := sql.Open("sqlite3", path)
+	db, err := sql.Open("sqlite", path)
 
 	Db = db
 	if err != nil {
