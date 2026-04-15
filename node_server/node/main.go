@@ -93,13 +93,16 @@ type CachedKey struct {
 func main() {
 	publicKeys := make(map[string]CachedKey)
 
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <id>")
-		fmt.Println("Exemple: go run main.go node-1")
+	var id string
+	if len(os.Args) >= 2 {
+		id = os.Args[1]
+	} else {
+		id = os.Getenv("NODE_ID")
+	}
+	if id == "" {
+		fmt.Println("Usage: go run main.go <id>  OR set NODE_ID env variable")
 		return
 	}
-
-	id := os.Args[1]
 	serverAddr := os.Getenv("SERVER_ADDR")
 	if serverAddr == "" {
 		serverAddr = "localhost:8080"
