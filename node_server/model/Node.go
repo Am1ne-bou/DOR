@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
@@ -50,7 +49,7 @@ type Node struct {
 	Port          int
 	PrivateKey    *rsa.PrivateKey
 	PublicKey     *rsa.PublicKey
-	KeyMu         sync.RWMutex          // protège PrivateKey et PublicKey
+	KeyMu         sync.RWMutex // protège PrivateKey et PublicKey
 	Listener      net.Listener
 	ServerAddr    string                // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
 	NodeIP        string                // IP du nœud vue par le serveur
@@ -148,6 +147,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	line, _ := reader.ReadString('\n')
 
 	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
 	if line == "GET_PUBKEY" {
 		n.KeyMu.RLock()
 		pubBytes, _ := x509.MarshalPKIXPublicKey(n.PublicKey)
@@ -175,41 +177,20 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		n.Mu.Unlock()
 		if exists {
 			fmt.Printf("[%s] Propagating NACK for %s to %s\n", n.ID, msgId, Nack.PrevNodeAddr)
-			n.SendTo(Nack.PrevNodeAddr, fmt.Sprintf("NACK:%s", Nack.PrevNackID))
+			for _, fromAddr := range ParseAddresses(Nack.PrevNodeAddr) {
+				if n.SendTo(fromAddr, fmt.Sprintf("NACK:%s", Nack.PrevNackID)) == nil {
+					break
+				}
+			}
 		}
 		return
 	}
-	// Séparation clé AES (chiffré via RSA) et payload chiffré via la dite clé AES
-	partsAES := strings.SplitN(line, ":", 2)
-	if len(partsAES) < 2 {
-		return
-	}
-
-	// Déchiffrement RSA (pour récup la clé AES) :
-	//on doit s'abord décoder la base 64 avant de déchiffrer le message via RSA :
-	encKey, err := base64.StdEncoding.DecodeString(partsAES[0])
-	if err != nil {
-		return
-	}
-
+	// try decrypter le message
 	n.KeyMu.RLock()
-	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, n.PrivateKey, encKey, nil)
+	decrypted, err := BroadcastDecrypt(line, n.PrivateKey)
 	n.KeyMu.RUnlock()
 	if err != nil {
-		fmt.Println("Erreur déchiffrement RSA (Clé AES)")
-		return
-	}
-
-	//déchiffrement AES (pour récup le le payload en clair)
-	//on doit s'abord décoder la base 64 avant de déchiffrer le message via AES :
-	encPayload, err := base64.StdEncoding.DecodeString(partsAES[1])
-	if err != nil {
-		return
-	}
-
-	decrypted, err := DecryptAES(aesKey, encPayload)
-	if err != nil {
-		fmt.Println("Erreur déchiffrement AES")
+		fmt.Printf("[%s] Decryption failed: %s\n", n.ID, err)
 		return
 	}
 
@@ -240,10 +221,27 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		n.PendingRelays[toreceive] = Nackstruct{PrevNackID: tosend, PrevNodeAddr: layer.From}
 		n.Mu.Unlock()
 
-		err = n.SendTo(layer.Next, layer.Data)
-		if err != nil {
-			fmt.Printf("[%s] Erreur relai: %s\n", n.ID, err)
-			n.SendTo(layer.From, fmt.Sprintf("NACK:%s", tosend))
+		// try each candidate in Next group
+		nextAddrs := ParseAddresses(layer.Next)
+		mrand.Shuffle(len(nextAddrs), func(i, j int) {
+			nextAddrs[i], nextAddrs[j] = nextAddrs[j], nextAddrs[i]
+		})
+		sent := false
+		for _, addr := range nextAddrs {
+			if n.SendTo(addr, layer.Data) == nil {
+				sent = true
+				break
+			}
+			fmt.Printf("[%s] Candidat %s injoignable\n", n.ID, addr)
+		}
+		if !sent {
+			fmt.Printf("[%s] Tout le groupe Next offline, NACK\n", n.ID)
+			// try each addr in From group for NACK propagation
+			for _, fromAddr := range ParseAddresses(layer.From) {
+				if n.SendTo(fromAddr, fmt.Sprintf("NACK:%s", tosend)) == nil {
+					break
+				}
+			}
 		}
 
 	case "FINAL":
@@ -251,10 +249,23 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		fmt.Printf("[%s] Message recu (MsgID : %s): \"%s\"\n", n.ID, layer.MsgID, layer.Message)
 		if layer.Next != "" && layer.Data != "" {
 			fmt.Printf("[%s] Envoi ACK pour %s via %s\n", n.ID, layer.MsgID, layer.Next)
-			err = n.SendTo(layer.Next, layer.Data)
-			if err != nil {
-				fmt.Printf("[%s] Erreur envoi ACK: %s\n", n.ID, err)
-				n.SendTo(layer.From, fmt.Sprintf("NACK:%s", layer.MsgID))
+			nextAddrs := ParseAddresses(layer.Next)
+			mrand.Shuffle(len(nextAddrs), func(i, j int) {
+				nextAddrs[i], nextAddrs[j] = nextAddrs[j], nextAddrs[i]
+			})
+			sent := false
+			for _, addr := range nextAddrs {
+				if n.SendTo(addr, layer.Data) == nil {
+					sent = true
+					break
+				}
+			}
+			if !sent {
+				for _, fromAddr := range ParseAddresses(layer.From) {
+					if n.SendTo(fromAddr, fmt.Sprintf("NACK:%s", layer.MsgID)) == nil {
+						break
+					}
+				}
 			}
 		}
 	case "ACK":

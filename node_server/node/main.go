@@ -124,6 +124,8 @@ func main() {
 	fmt.Println("  RELAY:<ip>:<port>,<ip>:<port>,...,<message>    - Relai multi-hop (route manuelle)")
 	fmt.Println("  SEND:<nbr>:<ip>:<port>:<message>              - Envoi auto (route aléatoire)")
 	fmt.Println("  REGEN:                                         - Régénère la clé RSA du noeud")
+	fmt.Println("  SSEND:<grp>:<nbr>:<ip>:<port>:<message>        - Envoi super-node (broadcast enc)")
+	fmt.Println("  SBENCH:<msgs>:<grp>:<nbr>:<retries>:<ip>:<port> - Bench super-node")
 	fmt.Println("  QUIT:                                          - Quitter")
 	fmt.Println("  LIST:                                          - Afficher la liste des noeuds enregistrés")
 	fmt.Println()
@@ -280,6 +282,39 @@ func main() {
 			err := node.RegenerateKeys()
 			if err != nil {
 				fmt.Println("Erreur lors de la régénération:", err)
+			}
+
+		case "SSEND":
+			// SSEND:<group_size>:<nbr_relays>:<ip>:<port>:<message>
+			subParts := strings.SplitN(data, ":", 5)
+			if len(subParts) < 5 {
+				fmt.Println("Format: SSEND:<group_size>:<nbr_relays>:<ip>:<port>:<message>")
+				continue
+			}
+			groupSize, _ := strconv.Atoi(subParts[0])
+			numRelays, _ := strconv.Atoi(subParts[1])
+			destAddr := subParts[2] + ":" + subParts[3]
+			message := subParts[4]
+
+			go SendWithRetrySuper(node, serverAddr, destAddr, message, numRelays, groupSize, publicKeys, 3, 0, time.Now())
+
+		case "SBENCH":
+			// SBENCH:<nbr_messages>:<group_size>:<nbr_relays>:<maxRetries>:<ip>:<port>
+			subParts := strings.SplitN(data, ":", 6)
+			if len(subParts) < 6 {
+				fmt.Println("Format: SBENCH:<nbr_messages>:<group_size>:<nbr_relays>:<maxRetries>:<ip>:<port>")
+				continue
+			}
+			nbrMsg, _ := strconv.Atoi(subParts[0])
+			groupSize, _ := strconv.Atoi(subParts[1])
+			numRelays, _ := strconv.Atoi(subParts[2])
+			maxRetries, _ := strconv.Atoi(subParts[3])
+			destAddr := subParts[4] + ":" + subParts[5]
+
+			for i := 0; i < nbrMsg; i++ {
+				msg := fmt.Sprintf("sbench-msg-%d", i)
+				go SendWithRetrySuper(node, serverAddr, destAddr, msg, numRelays, groupSize, publicKeys, maxRetries, 0, time.Now())
+				time.Sleep(500 * time.Millisecond)
 			}
 
 		case "QUIT":

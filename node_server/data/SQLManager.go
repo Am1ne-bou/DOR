@@ -14,13 +14,15 @@ import (
 var Db *sql.DB = nil
 
 func Connect(path string) error {
-
 	db, err := sql.Open("sqlite", path)
-
-	Db = db
 	if err != nil {
 		return err
 	}
+	Db = db
+
+	// WAL mode allows concurrent reads + one write, busy_timeout retries instead of failing instantly
+	Db.Exec("PRAGMA journal_mode=WAL")
+	Db.Exec("PRAGMA busy_timeout=5000")
 
 	return nil
 }
