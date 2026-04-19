@@ -320,7 +320,7 @@ func (n *Node) Stop() {
 
 }
 
-func (n *Node) JoinServerList(addrlist string) error {
+func (n *Node) JoinServerList(addrlist string, sa int, sn int) error {
 	conn, err := DialDirectoryServer(addrlist)
 	if err != nil {
 		return err
@@ -340,8 +340,8 @@ func (n *Node) JoinServerList(addrlist string) error {
 	//ensuite on utilise la base 64 et pas le binaire pour le pb des \n
 	pubBase64 := base64.StdEncoding.EncodeToString(pubBytes)
 
-	// Send: INIT:id:port:key
-	msg := fmt.Sprintf("INIT:%s:%d:%s\n", n.ID, n.Port, pubBase64)
+	// Send (v2): INIT:id:port:key:sa:sn
+	msg := fmt.Sprintf("INIT:%s:%d:%s:%d:%d\n", n.ID, n.Port, pubBase64, sa, sn)
 	_, err = conn.Write([]byte(msg))
 	if err != nil {
 		return err

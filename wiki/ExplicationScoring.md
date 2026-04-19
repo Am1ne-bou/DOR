@@ -110,6 +110,15 @@ Prenons l'exemple d'un cluster composé d'un serveur (**l'ancre**) et de 2 smart
 
 → Le score du cluster reflète cette "assurance de survie".
 
+### 5.3 Les clusters virtuels
+
+Contrairement à l'approche qu'on avait envisagé ici les clusters n'existent que dans la tête du **Sender**. Pour le reste du réseau, les nœuds sont tous "égaux" et indépendants. C'est le Sender qui, comme un chef d'orchestre, décide que "ok, ces trois noeuds là travailleront ensemble pour ce message précis". Cette approche permet d'éviter entre-autre :
+- Les regénérations de clés dont on a discuté si un noeud venait à quitter le cluster.
+- La synchronisation de l'état des clusters à un instant t, c'est-à-dire comment les noeuds s'assurent que leur vision des clusters est à jour (que certains noeuds n'ont pas quitté le réseau)
+- Le problème de mise-à-jour des scores. Si un appareil mobile passe de 5G à 4G par exemple, son score va évoluer, il sera déconnecté puis reconnecté, avec un score éventuellement plus faible. Comme les clusters sont calculés quand il y a besoin d'établir une nouvelle route, il n'y a pas de problème de synchronisation de score d'un cluster.
+
+Cela se fait au détriment de calculs que le sendeur devra réaliser pour construire sa vision des clusters. Pour un réseau avec énormément de noeuds, afin de ne pas surcharger le sendeur, le serveur d'autorité enverra seulement un échantillon du réseau (par exemple N=500 noeuds) aléatoirement et le sendeur construira sa vision des cluster et sa route en fonction de cet échantillon.
+
 -----
 
 # P2 : Stratégie d'ancrage dynamique

@@ -3,16 +3,37 @@ package main
 import (
 	"crypto/rsa"
 	"fmt"
-	mrand "math/rand"
+	// mrand "math/rand"
 	"project/node_server/model"
 	"strings"
 	"time"
+	"sort"
+	"encoding/base64"
+	"crypto/x509"
+	"strconv"
+)
+
+//Constantes
+const (
+    WeightAvailability = 0.5 // poids w1
+    WeightNetwork = 0.5 // poids w2
+    TargetClusterScore = 150  // Score cumulé visé par cluster
+    MaxNodesPerCluster = 5 // K (limite pour éviter des oignons trop gros)
+    MinClusters = 3 // valeur minimale requise : 3 pour l'anonymat
 )
 
 // LayerGroup represents a set of relay addresses and their associated public keys.
 type LayerGroup struct {
 	Addrs   []string
 	PubKeys []*rsa.PublicKey
+}
+
+// Fonction qui décode de la base64 vers []byte puis parse en PKIX.
+
+func parsePublicKey(keyB64 string) *rsa.PublicKey {
+    pubBytes, _ := base64.StdEncoding.DecodeString(keyB64)
+    pubKey, _ := x509.ParsePKIXPublicKey(pubBytes)
+    return pubKey.(*rsa.PublicKey)
 }
 
 // PickLayer selects up to groupSize candidates and returns the selected group plus the remaining candidates.
@@ -123,7 +144,7 @@ func SendWithRetrySuper(
 	destAddr string,
 	message string,
 	numHops int,
-	groupSize int,
+	groupSize int, //obsolète et remplacé par MaxNodesPerCluster
 	publicKeys map[string]CachedKey,
 	maxRetries int,
 	currentTry int,
@@ -139,6 +160,7 @@ func SendWithRetrySuper(
 		fmt.Printf("Retry %d/%d pour %s\n", currentTry, maxRetries, destAddr)
 	}
 
+	//récup échantillon du réseau
 	listStr, err := node.GetNodesList()
 	if err != nil {
 		fmt.Println("Erreur récupération liste:", err)
@@ -154,80 +176,93 @@ func SendWithRetrySuper(
 	entries := strings.Split(listData, ",")
 	nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
 
-	var candAddrs []string
-	var candKeys []*rsa.PublicKey
+	// var candAddrs []string
+	// var candKeys []*rsa.PublicKey
 
+	// for _, entry := range entries {
+	// 	fields := strings.SplitN(entry, "|", 4)
+	// 	if len(fields) < 4 {
+	// 		continue
+	// 	}
+	// 	addr := fields[1] + ":" + fields[2]
+	// 	if addr == nodeAddr || addr == destAddr {
+	// 		continue
+	// 	}
+	// 	cached, ok := publicKeys[addr]
+	// 	if !ok || time.Now().After(cached.ExpiresAt) {
+	// 		key, err := FetchKeyFromServer(addr, serverAddr)
+	// 		if err != nil {
+	// 			continue
+	// 		}
+	// 		publicKeys[addr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
+	// 		cached = publicKeys[addr]
+	// 	}
+	// 	candAddrs = append(candAddrs, addr)
+	// 	candKeys = append(candKeys, cached.Key)
+	// }
+
+
+	var candidates []model.NodeInfo
 	for _, entry := range entries {
-		fields := strings.SplitN(entry, "|", 4)
-		if len(fields) < 4 {
+		fields := strings.Split(entry, "|")
+		if len(fields) < 6 {
 			continue
 		}
-		addr := fields[1] + ":" + fields[2]
-		if addr == nodeAddr || addr == destAddr {
+
+		//on extraie les données dont les deux scores
+		port, _ := strconv.Atoi(fields[2])
+		sa, _ := strconv.Atoi(fields[4])
+		sn, _ := strconv.Atoi(fields[5])
+
+		n := model.NodeInfo{
+			Name:              fields[0],
+			Ip:                fields[1],
+			Port:              port,
+			PublicKey:         fields[3],
+			AvailabilityScore: sa,
+			NetworkScore:      sn,
+		}
+
+		addr := fmt.Sprintf("%s:%d", n.Ip, n.Port)
+		if addr == nodeAddr || addr == destAddr { //on exclut l'expéditeur et la destination de la liste des relais
 			continue
 		}
-		cached, ok := publicKeys[addr]
-		if !ok || time.Now().After(cached.ExpiresAt) {
-			key, err := FetchKeyFromServer(addr, serverAddr)
-			if err != nil {
-				continue
-			}
-			publicKeys[addr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
-			cached = publicKeys[addr]
+
+		//on met a jour le cache des clés publiques (pour le clustering)
+		if _, ok := publicKeys[addr]; !ok {
+			key := parsePublicKey(n.PublicKey)
+			publicKeys[addr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(1 * time.Minute)}
 		}
-		candAddrs = append(candAddrs, addr)
-		candKeys = append(candKeys, cached.Key)
+		candidates = append(candidates, n)
 	}
 
-	if len(candAddrs) < numHops {
-		fmt.Println("Pas assez de nodes pour la route")
+	if len(candidates) < numHops {
+		fmt.Printf("Pas assez de nœuds (%d) pour %d hops\n", len(candidates), numHops)
 		return
 	}
 
-	// fetch dest key
-	cachedDest, ok := publicKeys[destAddr]
-	if !ok || time.Now().After(cachedDest.ExpiresAt) {
-		key, err := FetchKeyFromServer(destAddr, serverAddr)
-		if err != nil {
-			fmt.Println("Erreur clé destination:", err)
-			return
-		}
-		publicKeys[destAddr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
-		cachedDest = publicKeys[destAddr]
+	relayGroups, reliability := BuildSmartClusters(candidates, numHops, publicKeys)
+	// Calcul et affichage de la fiabilité globale de la route (pour débug et tests)
+	reliabilityPercent := (reliability / TargetClusterScore) * 100
+	if reliabilityPercent > 100 {
+		reliabilityPercent = 100
 	}
+	fmt.Printf("Route construite. Fiabilité estimée : %.1f%%\n", reliabilityPercent)
 
-	// shuffle all candidates
-	perm := mrand.Perm(len(candAddrs))
-	shuffledAddrs := make([]string, len(candAddrs))
-	shuffledKeys := make([]*rsa.PublicKey, len(candKeys))
-	for i, j := range perm {
-		shuffledAddrs[i] = candAddrs[j]
-		shuffledKeys[i] = candKeys[j]
+	//on prépare la destination et la route retour
+	destKey, err := FetchKeyFromServer(destAddr, serverAddr)
+	if err != nil {
+		fmt.Println("Erreur : Clé de destination introuvable.")
+		return
 	}
+	destGroup := LayerGroup{Addrs: []string{destAddr}, PubKeys: []*rsa.PublicKey{destKey}}
 
-	// build groups for each hop
-	remaining := shuffledAddrs
-	remainingKeys := shuffledKeys
-	var relayGroups []LayerGroup
-	for h := 0; h < numHops; h++ {
-		if len(remaining) == 0 {
-			break
-		}
-		var g LayerGroup
-		g, remaining, remainingKeys = PickLayer(remaining, remainingKeys, groupSize)
-		relayGroups = append(relayGroups, g)
-	}
-
-	// dest = single node group
-	destGroup := LayerGroup{Addrs: []string{destAddr}, PubKeys: []*rsa.PublicKey{cachedDest.Key}}
-
-	// forward route: [relayGroups..., destGroup]
-	route := append(relayGroups, destGroup)
-
-	// return route: reverse relay groups + sender
+	route := append(relayGroups, destGroup) // Route Forward : [RelayGroups...] + DestGroup
+ 
 	node.KeyMu.RLock()
 	senderPub := node.PublicKey
 	node.KeyMu.RUnlock()
+	// Route Retour : Reverse(RelayGroups...) + SenderGroup
 	senderGroup := LayerGroup{Addrs: []string{nodeAddr}, PubKeys: []*rsa.PublicKey{senderPub}}
 
 	var returnRoute []LayerGroup
@@ -236,16 +271,69 @@ func SendWithRetrySuper(
 	}
 	returnRoute = append(returnRoute, senderGroup)
 
-	fmt.Printf("Route forward (super) : ")
-	for _, g := range route {
-		fmt.Printf("%v ", g.Addrs)
-	}
-	fmt.Println()
-	fmt.Printf("Route retour (super)  : ")
-	for _, g := range returnRoute {
-		fmt.Printf("%v ", g.Addrs)
-	}
-	fmt.Println()
+
+	// // fetch dest key
+	// cachedDest, ok := publicKeys[destAddr]
+	// if !ok || time.Now().After(cachedDest.ExpiresAt) {
+	// 	key, err := FetchKeyFromServer(destAddr, serverAddr)
+	// 	if err != nil {
+	// 		fmt.Println("Erreur clé destination:", err)
+	// 		return
+	// 	}
+	// 	publicKeys[destAddr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
+	// 	cachedDest = publicKeys[destAddr]
+	// }
+
+	// // shuffle all candidates
+	// perm := mrand.Perm(len(candAddrs))
+	// shuffledAddrs := make([]string, len(candAddrs))
+	// shuffledKeys := make([]*rsa.PublicKey, len(candKeys))
+	// for i, j := range perm {
+	// 	shuffledAddrs[i] = candAddrs[j]
+	// 	shuffledKeys[i] = candKeys[j]
+	// }
+
+	// // build groups for each hop
+	// remaining := shuffledAddrs
+	// remainingKeys := shuffledKeys
+	// var relayGroups []LayerGroup
+	// for h := 0; h < numHops; h++ {
+	// 	if len(remaining) == 0 {
+	// 		break
+	// 	}
+	// 	var g LayerGroup
+	// 	g, remaining, remainingKeys = PickLayer(remaining, remainingKeys, groupSize)
+	// 	relayGroups = append(relayGroups, g)
+	// }
+
+	// // dest = single node group
+	// destGroup := LayerGroup{Addrs: []string{destAddr}, PubKeys: []*rsa.PublicKey{cachedDest.Key}}
+
+	// // forward route: [relayGroups..., destGroup]
+	// route := append(relayGroups, destGroup)
+
+	// // return route: reverse relay groups + sender
+	// node.KeyMu.RLock()
+	// senderPub := node.PublicKey
+	// node.KeyMu.RUnlock()
+	// senderGroup := LayerGroup{Addrs: []string{nodeAddr}, PubKeys: []*rsa.PublicKey{senderPub}}
+
+	// var returnRoute []LayerGroup
+	// for i := len(relayGroups) - 1; i >= 0; i-- {
+	// 	returnRoute = append(returnRoute, relayGroups[i])
+	// }
+	// returnRoute = append(returnRoute, senderGroup)
+
+	// fmt.Printf("Route forward (super) : ")
+	// for _, g := range route {
+	// 	fmt.Printf("%v ", g.Addrs)
+	// }
+	// fmt.Println()
+	// fmt.Printf("Route retour (super)  : ")
+	// for _, g := range returnRoute {
+	// 	fmt.Printf("%v ", g.Addrs)
+	// }
+	// fmt.Println()
 
 	// encapsulate
 	onion, msgID, firstNackID, err := Encapsulator_func_super(message, route, returnRoute, nodeAddr)
@@ -277,6 +365,7 @@ func SendWithRetrySuper(
 		delete(node.PendingACKs, msgID)
 		delete(node.PendingACKs, firstNackID)
 		node.Mu.Unlock()
+		//nouvelle tentative avec une nouvelle route
 		SendWithRetrySuper(node, serverAddr, destAddr, message, numHops, groupSize, publicKeys, maxRetries, currentTry+1, startTime)
 		return
 	}
@@ -308,4 +397,76 @@ func SendWithRetrySuper(
 			node.Mu.Unlock()
 		}
 	}(msgID, firstNackID, ackChan)
+}
+
+// Fonction qui calcule le score GLOBAL d'un noeud : S_node = (w1 * Sa) + (w2 * Sn)
+func calculateNodeScore(n model.NodeInfo) float64 {
+    return (float64(n.AvailabilityScore) * WeightAvailability) + (float64(n.NetworkScore) * WeightNetwork)
+}
+
+// Fonction qui trie les noeuds du meilleur au moins bon (en fonction du score)
+func sortNodesByScore(nodes []model.NodeInfo) []model.NodeInfo {
+    sort.Slice(nodes, func(i, j int) bool {
+        return calculateNodeScore(nodes[i]) > calculateNodeScore(nodes[j])
+    })
+    return nodes
+}
+
+// Fonction qui construit les clusters par ancrage puis remplissage (voir wiki)
+func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[string]CachedKey) ([]LayerGroup, float64) {
+    sortedNodes := sortNodesByScore(nodes)
+    clusters := make([]LayerGroup, numHops)
+    clusterScores := make([]float64, numHops)
+
+    //On place les meilleurs noeuds en tête de chaque cluster (ancrage)
+    nodeIdx := 0
+    for i := 0; i < numHops && nodeIdx < len(sortedNodes); i++ {
+        n := sortedNodes[nodeIdx]
+        clusters[i].Addrs = append(clusters[i].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
+        
+        pubKey := parsePublicKey(n.PublicKey) //on convertie la clé string en rsa.PublicKey
+        clusters[i].PubKeys = append(clusters[i].PubKeys, pubKey)
+        clusterScores[i] += calculateNodeScore(n)
+        nodeIdx++
+    }
+
+    //on distribue le reste selon le score le plus faible (remplissage)
+    for nodeIdx < len(sortedNodes) {
+        //on cherche le cluster avec score global le + bas
+        targetIdx := 0
+        minScore := clusterScores[0]
+        for i, s := range clusterScores {
+            if s < minScore {
+                minScore = s
+                targetIdx = i
+            }
+        }
+
+        //vérif des conditions d'arret (si cluster dépasse score max ou nb de noeud max)
+        if clusterScores[targetIdx] >= float64(TargetClusterScore) || len(clusters[targetIdx].Addrs) >= MaxNodesPerCluster {
+            break
+        }
+
+        //ajout du noeud volatile
+        n := sortedNodes[nodeIdx]
+        clusters[targetIdx].Addrs = append(clusters[targetIdx].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
+        clusters[targetIdx].PubKeys = append(clusters[targetIdx].PubKeys, parsePublicKey(n.PublicKey))
+        clusterScores[targetIdx] += calculateNodeScore(n)
+        nodeIdx++
+    }
+
+    //avertissement si le score final est bas (f° en "mode dégradé")
+    for i, s := range clusterScores {
+        if s < float64(TargetClusterScore)*0.5 {
+            fmt.Printf(" [!] Warning: Cluster %d is weak (Score: %.1f)\n", i+1, s)
+        }
+    }
+   
+	var totalScore float64
+    for _, s := range clusterScores {
+        totalScore += s
+    }
+    avgScore := totalScore / float64(numHops)
+    return clusters, avgScore
+
 }

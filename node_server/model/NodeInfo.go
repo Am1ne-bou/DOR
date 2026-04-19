@@ -6,4 +6,6 @@ type NodeInfo struct {
 	Ip        string
 	Port      int
 	PublicKey string
+	AvailabilityScore int
+    NetworkScore int
 }

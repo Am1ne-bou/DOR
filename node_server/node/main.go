@@ -113,7 +113,10 @@ func main() {
 
 	go node.StartNode()
 
-	err = node.JoinServerList(serverAddr)
+	profile := os.Getenv("NETWORK_PROFILE")
+	sa, sn := GetScoresFromProfile(profile)
+
+	err = node.JoinServerList(serverAddr, sa, sn)
 	if err != nil {
 		fmt.Println("Error joining server:", err)
 	}
@@ -642,4 +645,20 @@ func encryptForNode(plaintext []byte, pubKey *rsa.PublicKey) (string, error) {
 	// Format : base64(key AES encrpted by RSA):base64(plaintext encrypted by AES)
 	return base64.StdEncoding.EncodeToString(encKey) + ":" +
 		base64.StdEncoding.EncodeToString(encPlaintext), nil
+}
+
+// Fonction pour déduire les scores (disponibilité et réseau) en fonction du profil du docker
+func GetScoresFromProfile(profile string) (int, int) {
+    switch profile {
+    case "server":
+        return 100, 100
+	case "laptop_WIFI7":
+		return 60, 85
+    case "smartphone_4G":
+        return 30, 75
+    case "smartphone_2G":
+        return 20, 10
+    default:
+        return 15, 15 // Score par défaut choix arbitraire
+    }
 }

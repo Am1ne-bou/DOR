@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const MaxSampleNodes = 500
+
 //var mu sync.Mutex
 //var nodes = make(map[net.Conn]model.Node)
 //var nbrNodes int = 0
@@ -128,18 +130,17 @@ func handleConnection(conn net.Conn) {
 
 	switch cmd {
 	case "INIT":
-		// Format: INIT:id:port:key
-		if len(parts) < 4 {
+		// Format v2: INIT:id:port:key:Sa:Sn
+		if len(parts) < 6 {
 			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
-			if err != nil {
-				return
-			}
 			return
 		}
 
 		name := parts[1]
 		port, _ := strconv.Atoi(parts[2])
 		key := parts[3]
+		sa, _ := strconv.Atoi(parts[4]) // Score de disponibilité
+    	sn, _ := strconv.Atoi(parts[5]) // Score réseau
 
 		ip_string := conn.RemoteAddr().String()
 		host := os.Getenv("NODE_ADDR")
@@ -153,6 +154,8 @@ func handleConnection(conn net.Conn) {
 			Ip:        host,
 			Port:      port,
 			PublicKey: key,
+			AvailabilityScore: sa,
+        	NetworkScore: sn,
 		}
 
 		// Ajout dans BDD
@@ -162,7 +165,7 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		fmt.Printf("[+] Node %s registered (Port: %d)\n", name, port)
+		fmt.Printf("[+] Node %s registered (Port: %d, Sa: %d, Sn: %d)\n", name, port, sa, sn)
 		_, err = conn.Write([]byte("INIT_ACK:" + name + ":" + host + "\n"))
 		if err != nil {
 			return
@@ -255,7 +258,7 @@ func handleConnection(conn net.Conn) {
 
 func getNodesList() string {
 	// Utiliser data.GetNodesList() à la place
-	nodes, err := data.GetNodesList()
+	nodes, err := data.GetNodesList(MaxSampleNodes)
 	if err != nil || len(nodes) == 0 {
 		return "LIST:empty\n"
 	}
@@ -267,7 +270,7 @@ func getNodesList() string {
 		if i > 0 {
 			result.WriteString(",")
 		}
-		result.WriteString(fmt.Sprintf("%s|%s|%d|%s", info.Name, info.Ip, info.Port, info.PublicKey))
+		result.WriteString(fmt.Sprintf("%s|%s|%d|%s|%d|%d", info.Name, info.Ip, info.Port, info.PublicKey, info.AvailabilityScore, info.NetworkScore))
 	}
 	result.WriteString("\n")
 
@@ -286,7 +289,7 @@ func showNodes() {
 		fmt.Println("  (aucun)")
 	} else {
 		for _, info := range nodes {
-			fmt.Printf("  . %s - Addr: %s:%d, Key: %s\n", info.Name, info.Ip, info.Port, info.PublicKey)
+			fmt.Printf("  . %s - Addr: %s:%d, Key: %s, [Sa:%d Sn:%d]\n", info.Name, info.Ip, info.Port, info.PublicKey, info.AvailabilityScore, info.NetworkScore)
 		}
 	}
 	fmt.Printf("Total: %d\n\n", len(nodes))

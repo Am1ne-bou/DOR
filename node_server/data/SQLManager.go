@@ -3,11 +3,8 @@ package data
 import (
 	"database/sql"
 	"strconv"
-
 	//"os"
-
 	"project/node_server/model"
-
 	_ "modernc.org/sqlite"
 )
 
@@ -35,11 +32,12 @@ func InitTable() error {
         name TEXT,
 		ip TEXT,
 		port INTEGER,
-		publicKey TEXT
+		publicKey TEXT,
+		availability_score INTEGER DEFAULT 0,
+		network_score INTEGER DEFAULT 0
     );
     `
 	_, err := Db.Exec(sqlStmt)
-
 	return err
 }
 
@@ -49,8 +47,10 @@ func AddNode(node *model.NodeInfo) error {
 	ip := node.Ip
 	port := node.Port
 	key := node.PublicKey
+	availability_score := node.AvailabilityScore
+	network_score := node.NetworkScore
 
-	_, err := Db.Exec("INSERT INTO nodes(uuid, name, ip, port, publicKey) VALUES(?, ?, ?, ?, ?)", uuid, name, ip, port, key)
+	_, err := Db.Exec("INSERT INTO nodes(uuid, name, ip, port, publicKey, availability_score, network_score) VALUES(?, ?, ?, ?, ?, ?, ?)", uuid, name, ip, port, key, availability_score, network_score)
 	if err != nil {
 		return err
 	}
@@ -58,11 +58,9 @@ func AddNode(node *model.NodeInfo) error {
 	return nil
 }
 
-func GetNodesList() ([]model.NodeInfo, error) {
-
+func GetNodesList(limit int) ([]model.NodeInfo, error) {
 	var nodes []model.NodeInfo
-
-	rows, err := Db.Query("SELECT uuid, name, ip, port, publicKey FROM nodes")
+	rows, err := Db.Query("SELECT uuid, name, ip, port, publicKey, availability_score, network_score FROM nodes ORDER BY RANDOM() LIMIT ?", limit)
 	if err != nil {
 		return []model.NodeInfo{}, err
 	}
@@ -75,18 +73,14 @@ func GetNodesList() ([]model.NodeInfo, error) {
 	}(rows)
 
 	for rows.Next() {
-		var uuid, name, ip, key string
-		var port int
+		var n model.NodeInfo
 
-		err = rows.Scan(&uuid, &name, &ip, &port, &key)
+		err = rows.Scan(&n.Uuid, &n.Name, &n.Ip, &n.Port, &n.PublicKey, &n.AvailabilityScore, &n.NetworkScore)
+		if err != nil {
+            continue
+        }
 
-		nodes = append(nodes, model.NodeInfo{
-			Uuid:      uuid,
-			Name:      name,
-			Ip:        ip,
-			Port:      port,
-			PublicKey: key,
-		})
+		nodes = append(nodes, n)
 	}
 
 	if err = rows.Err(); err != nil {
