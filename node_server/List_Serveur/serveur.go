@@ -132,7 +132,7 @@ func handleConnection(conn net.Conn) {
 	case "INIT":
 		// Format v2: INIT:id:port:key:Sa:Sn
 		if len(parts) < 6 {
-			_, err := conn.Write([]byte("ERROR:Invalid format\n"))
+			_, err = conn.Write([]byte("ERROR:Invalid format\n"))
 			return
 		}
 
@@ -159,7 +159,7 @@ func handleConnection(conn net.Conn) {
 		}
 
 		// Ajout dans BDD
-		err := data.AddNode(&info)
+		err = data.AddNode(&info)
 		if err != nil {
 			fmt.Println("Error adding node:", err)
 			return
@@ -216,11 +216,11 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		nodes, _ := data.GetNodesList()
+		nodes, _ := data.GetNodesList(MaxSampleNodes)
 
 		for _, node := range nodes {
 			if node.Ip == ip && node.Port == port {
-				_, err := conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
+				_, err = conn.Write([]byte("KEY:" + node.PublicKey + "\n"))
 				if err != nil {
 					return
 				}
@@ -278,7 +278,7 @@ func getNodesList() string {
 }
 
 func showNodes() {
-	nodes, err := data.GetNodesList()
+	nodes, err := data.GetNodesList(MaxSampleNodes)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
@@ -300,7 +300,7 @@ func TestPing() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		nodes, err := data.GetNodesList()
+		nodes, err := data.GetNodesList(MaxSampleNodes)
 		if err != nil {
 			fmt.Println("Error:", err)
 			continue
