@@ -149,6 +149,7 @@ func SendWithRetrySuper(
 	maxRetries int,
 	currentTry int,
 	startTime time.Time,
+	failedNodes []string,
 ) {
 	if currentTry >= maxRetries {
 		elapsed := time.Since(startTime).Milliseconds()
@@ -175,32 +176,6 @@ func SendWithRetrySuper(
 	listData := strings.TrimPrefix(listStr, "LIST:")
 	entries := strings.Split(listData, ",")
 	nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
-
-	// var candAddrs []string
-	// var candKeys []*rsa.PublicKey
-
-	// for _, entry := range entries {
-	// 	fields := strings.SplitN(entry, "|", 4)
-	// 	if len(fields) < 4 {
-	// 		continue
-	// 	}
-	// 	addr := fields[1] + ":" + fields[2]
-	// 	if addr == nodeAddr || addr == destAddr {
-	// 		continue
-	// 	}
-	// 	cached, ok := publicKeys[addr]
-	// 	if !ok || time.Now().After(cached.ExpiresAt) {
-	// 		key, err := FetchKeyFromServer(addr, serverAddr)
-	// 		if err != nil {
-	// 			continue
-	// 		}
-	// 		publicKeys[addr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
-	// 		cached = publicKeys[addr]
-	// 	}
-	// 	candAddrs = append(candAddrs, addr)
-	// 	candKeys = append(candKeys, cached.Key)
-	// }
-
 
 	var candidates []model.NodeInfo
 	for _, entry := range entries {
@@ -241,7 +216,7 @@ func SendWithRetrySuper(
 		return
 	}
 
-	relayGroups, reliability := BuildSmartClusters(candidates, numHops, publicKeys)
+	relayGroups, reliability := BuildSmartClusters(candidates, numHops, publicKeys, failedNodes)
 	// Calcul et affichage de la fiabilité globale de la route (pour débug et tests)
 	reliabilityPercent := (reliability / TargetClusterScore) * 100
 	if reliabilityPercent > 100 {
@@ -271,71 +246,6 @@ func SendWithRetrySuper(
 	}
 	returnRoute = append(returnRoute, senderGroup)
 
-
-	// // fetch dest key
-	// cachedDest, ok := publicKeys[destAddr]
-	// if !ok || time.Now().After(cachedDest.ExpiresAt) {
-	// 	key, err := FetchKeyFromServer(destAddr, serverAddr)
-	// 	if err != nil {
-	// 		fmt.Println("Erreur clé destination:", err)
-	// 		return
-	// 	}
-	// 	publicKeys[destAddr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
-	// 	cachedDest = publicKeys[destAddr]
-	// }
-
-	// // shuffle all candidates
-	// perm := mrand.Perm(len(candAddrs))
-	// shuffledAddrs := make([]string, len(candAddrs))
-	// shuffledKeys := make([]*rsa.PublicKey, len(candKeys))
-	// for i, j := range perm {
-	// 	shuffledAddrs[i] = candAddrs[j]
-	// 	shuffledKeys[i] = candKeys[j]
-	// }
-
-	// // build groups for each hop
-	// remaining := shuffledAddrs
-	// remainingKeys := shuffledKeys
-	// var relayGroups []LayerGroup
-	// for h := 0; h < numHops; h++ {
-	// 	if len(remaining) == 0 {
-	// 		break
-	// 	}
-	// 	var g LayerGroup
-	// 	g, remaining, remainingKeys = PickLayer(remaining, remainingKeys, groupSize)
-	// 	relayGroups = append(relayGroups, g)
-	// }
-
-	// // dest = single node group
-	// destGroup := LayerGroup{Addrs: []string{destAddr}, PubKeys: []*rsa.PublicKey{cachedDest.Key}}
-
-	// // forward route: [relayGroups..., destGroup]
-	// route := append(relayGroups, destGroup)
-
-	// // return route: reverse relay groups + sender
-	// node.KeyMu.RLock()
-	// senderPub := node.PublicKey
-	// node.KeyMu.RUnlock()
-	// senderGroup := LayerGroup{Addrs: []string{nodeAddr}, PubKeys: []*rsa.PublicKey{senderPub}}
-
-	// var returnRoute []LayerGroup
-	// for i := len(relayGroups) - 1; i >= 0; i-- {
-	// 	returnRoute = append(returnRoute, relayGroups[i])
-	// }
-	// returnRoute = append(returnRoute, senderGroup)
-
-	// fmt.Printf("Route forward (super) : ")
-	// for _, g := range route {
-	// 	fmt.Printf("%v ", g.Addrs)
-	// }
-	// fmt.Println()
-	// fmt.Printf("Route retour (super)  : ")
-	// for _, g := range returnRoute {
-	// 	fmt.Printf("%v ", g.Addrs)
-	// }
-	// fmt.Println()
-
-	// encapsulate
 	onion, msgID, firstNackID, err := Encapsulator_func_super(message, route, returnRoute, nodeAddr)
 	if err != nil {
 		fmt.Println("Erreur encapsulation:", err)
@@ -357,7 +267,10 @@ func SendWithRetrySuper(
 			sent = true
 			break
 		}
-		fmt.Printf("Candidat %s injoignable\n", addr)
+		fmt.Printf("Candidat %s injoignable, ajout à la blacklist\n", addr)
+		failedNodes = append(failedNodes, addr)
+
+
 	}
 	if !sent {
 		fmt.Println("Erreur envoi: tout le premier groupe offline")
@@ -366,7 +279,7 @@ func SendWithRetrySuper(
 		delete(node.PendingACKs, firstNackID)
 		node.Mu.Unlock()
 		//nouvelle tentative avec une nouvelle route
-		SendWithRetrySuper(node, serverAddr, destAddr, message, numHops, groupSize, publicKeys, maxRetries, currentTry+1, startTime)
+		SendWithRetrySuper(node, serverAddr, destAddr, message, numHops, groupSize, publicKeys, maxRetries, currentTry+1, startTime, failedNodes)
 		return
 	}
 
@@ -385,7 +298,7 @@ func SendWithRetrySuper(
 				delete(node.PendingACKs, id)
 				delete(node.PendingACKs, nackID)
 				node.Mu.Unlock()
-				SendWithRetrySuper(node, serverAddr, destAddr, message, numHops, groupSize, publicKeys, maxRetries, currentTry+1, startTime)
+				SendWithRetrySuper(node, serverAddr, destAddr, message, numHops, groupSize, publicKeys, maxRetries, currentTry+1, startTime, failedNodes)
 			}
 		case <-time.After(8 * time.Second):
 			elapsed := time.Since(startTime).Milliseconds()
@@ -413,8 +326,29 @@ func sortNodesByScore(nodes []model.NodeInfo) []model.NodeInfo {
 }
 
 // Fonction qui construit les clusters par ancrage puis remplissage (voir wiki)
-func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[string]CachedKey) ([]LayerGroup, float64) {
-    sortedNodes := sortNodesByScore(nodes)
+func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[string]CachedKey, blacklist []string) ([]LayerGroup, float64) {
+    
+	/// L'objectif est de filtrer d'abord les noeuds blacklistés 
+	// càd ceux qui ont échoué une fois pour ne pas les retenter lors 
+	// du retry (ainsi même si TestPing est à 1O sec, ce même noeud ne
+	// sera pas choisi indéfiniment)
+	var availableNodes []model.NodeInfo
+    for _, n := range nodes {
+        addr := fmt.Sprintf("%s:%d", n.Ip, n.Port)
+        isBlacklisted := false
+        for _, b := range blacklist {
+            if b == addr {
+                isBlacklisted = true
+                break
+            }
+        }
+        if !isBlacklisted {
+            availableNodes = append(availableNodes, n)
+        }
+    }
+	
+	
+	sortedNodes := sortNodesByScore(availableNodes)
     clusters := make([]LayerGroup, numHops)
     clusterScores := make([]float64, numHops)
 

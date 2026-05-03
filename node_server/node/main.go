@@ -299,7 +299,7 @@ func main() {
 			destAddr := subParts[2] + ":" + subParts[3]
 			message := subParts[4]
 
-			go SendWithRetrySuper(node, serverAddr, destAddr, message, numRelays, groupSize, publicKeys, 3, 0, time.Now())
+			go SendWithRetrySuper(node, serverAddr, destAddr, message, numRelays, groupSize, publicKeys, 3, 0, time.Now(), []string{})
 
 		case "SBENCH":
 			// SBENCH:<nbr_messages>:<group_size>:<nbr_relays>:<maxRetries>:<ip>:<port>
@@ -316,7 +316,7 @@ func main() {
 
 			for i := 0; i < nbrMsg; i++ {
 				msg := fmt.Sprintf("sbench-msg-%d", i)
-				go SendWithRetrySuper(node, serverAddr, destAddr, msg, numRelays, groupSize, publicKeys, maxRetries, 0, time.Now())
+				go SendWithRetrySuper(node, serverAddr, destAddr, msg, numRelays, groupSize, publicKeys, maxRetries, 0, time.Now(), []string{})
 				time.Sleep(500 * time.Millisecond)
 			}
 
