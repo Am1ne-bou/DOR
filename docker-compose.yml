@@ -1,0 +1,75 @@
+services:
+  directory:
+    build:
+      context: ./docker/directory
+    container_name: directory
+    networks:
+      - dor
+    ports:
+      - "8080:8080"
+    stdin_open: true
+    tty: true
+
+  node1:
+    build:
+      context: ./docker/amd
+    container_name: node1
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - dor
+    ports:
+      - "9001:9001"
+    environment:
+      NETWORK_PROFILE: laptop_WIFI5
+      PORT: 9001
+      SERVER_ADDR: directory:8080
+      NODE_ID: node1
+    depends_on:
+      - directory
+    stdin_open: true
+    tty: true
+
+  node2:
+    build:
+      context: ./docker/amd
+    container_name: node2
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - dor
+    ports:
+      - "9002:9002"
+    environment:
+      NETWORK_PROFILE: smartphone_4G
+      PORT: 9002
+      SERVER_ADDR: directory:8080
+      NODE_ID: node2
+    depends_on:
+      - directory
+    stdin_open: true
+    tty: true
+
+  node3:
+    build:
+      context: ./docker/amd
+    container_name: node3
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - dor
+    ports:
+      - "9003:9003"
+    environment:
+      NETWORK_PROFILE: laptop_WIFI6
+      PORT: 9003
+      SERVER_ADDR: directory:8080
+      NODE_ID: node3
+    depends_on:
+      - directory
+    stdin_open: true
+    tty: true
+
+networks:
+  dor:
+    driver: bridge

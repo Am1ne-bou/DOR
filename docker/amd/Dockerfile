@@ -24,4 +24,4 @@ RUN chmod +x /usr/projet-dor/Projet-DOR/node_server/node/apply_network_profile.s
 
 WORKDIR /usr/projet-dor/Projet-DOR/node_server/node/
 
-CMD ["sh", "-c", "./apply_network_profile.sh $NETWORK_PROFILE && sh"]
+CMD ["sh", "-c", "./apply_network_profile.sh $NETWORK_PROFILE && until nc -z directory 8080; do echo 'waiting for directory...'; sleep 1; done && go run main.go"]
