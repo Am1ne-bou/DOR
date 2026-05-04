@@ -2,24 +2,24 @@ package main
 
 import (
 	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	// mrand "math/rand"
 	"project/node_server/model"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
-	"sort"
-	"encoding/base64"
-	"crypto/x509"
-	"strconv"
 )
 
-//Constantes
+// Constantes
 const (
-    WeightAvailability = 0.5 // poids w1
-    WeightNetwork = 0.5 // poids w2
-    TargetClusterScore = 150  // Score cumulé visé par cluster
-    MaxNodesPerCluster = 5 // K (limite pour éviter des oignons trop gros)
-    MinClusters = 3 // valeur minimale requise : 3 pour l'anonymat
+	WeightAvailability = 0.5 // poids w1
+	WeightNetwork      = 0.5 // poids w2
+	TargetClusterScore = 150 // Score cumulé visé par cluster
+	MaxNodesPerCluster = 5   // K (limite pour éviter des oignons trop gros)
+	MinClusters        = 3   // valeur minimale requise : 3 pour l'anonymat
 )
 
 // LayerGroup represents a set of relay addresses and their associated public keys.
@@ -31,9 +31,19 @@ type LayerGroup struct {
 // Fonction qui décode de la base64 vers []byte puis parse en PKIX.
 
 func parsePublicKey(keyB64 string) *rsa.PublicKey {
-    pubBytes, _ := base64.StdEncoding.DecodeString(keyB64)
-    pubKey, _ := x509.ParsePKIXPublicKey(pubBytes)
-    return pubKey.(*rsa.PublicKey)
+	pubBytes, err := base64.StdEncoding.DecodeString(keyB64)
+	if err != nil {
+		return nil
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(pubBytes)
+	if err != nil {
+		return nil
+	}
+	rsaKey, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		return nil
+	}
+	return rsaKey
 }
 
 // PickLayer selects up to groupSize candidates and returns the selected group plus the remaining candidates.
@@ -206,9 +216,18 @@ func SendWithRetrySuper(
 		//on met a jour le cache des clés publiques (pour le clustering)
 		if _, ok := publicKeys[addr]; !ok {
 			key := parsePublicKey(n.PublicKey)
+			if key == nil {
+				fmt.Printf("Clé invalide pour %s, skip\n", addr)
+				continue
+			}
 			publicKeys[addr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(1 * time.Minute)}
 		}
 		candidates = append(candidates, n)
+	}
+
+	if numHops < MinClusters {
+		fmt.Printf("Nombre de hops %d < MinClusters %d, ajusté\n", numHops, MinClusters)
+		numHops = MinClusters
 	}
 
 	if len(candidates) < numHops {
@@ -233,7 +252,7 @@ func SendWithRetrySuper(
 	destGroup := LayerGroup{Addrs: []string{destAddr}, PubKeys: []*rsa.PublicKey{destKey}}
 
 	route := append(relayGroups, destGroup) // Route Forward : [RelayGroups...] + DestGroup
- 
+
 	node.KeyMu.RLock()
 	senderPub := node.PublicKey
 	node.KeyMu.RUnlock()
@@ -269,7 +288,6 @@ func SendWithRetrySuper(
 		}
 		fmt.Printf("Candidat %s injoignable, ajout à la blacklist\n", addr)
 		failedNodes = append(failedNodes, addr)
-
 
 	}
 	if !sent {
@@ -314,93 +332,101 @@ func SendWithRetrySuper(
 
 // Fonction qui calcule le score GLOBAL d'un noeud : S_node = (w1 * Sa) + (w2 * Sn)
 func calculateNodeScore(n model.NodeInfo) float64 {
-    return (float64(n.AvailabilityScore) * WeightAvailability) + (float64(n.NetworkScore) * WeightNetwork)
+	return (float64(n.AvailabilityScore) * WeightAvailability) + (float64(n.NetworkScore) * WeightNetwork)
 }
 
 // Fonction qui trie les noeuds du meilleur au moins bon (en fonction du score)
 func sortNodesByScore(nodes []model.NodeInfo) []model.NodeInfo {
-    sort.Slice(nodes, func(i, j int) bool {
-        return calculateNodeScore(nodes[i]) > calculateNodeScore(nodes[j])
-    })
-    return nodes
+	sort.Slice(nodes, func(i, j int) bool {
+		return calculateNodeScore(nodes[i]) > calculateNodeScore(nodes[j])
+	})
+	return nodes
 }
 
 // Fonction qui construit les clusters par ancrage puis remplissage (voir wiki)
 func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[string]CachedKey, blacklist []string) ([]LayerGroup, float64) {
-    
-	/// L'objectif est de filtrer d'abord les noeuds blacklistés 
-	// càd ceux qui ont échoué une fois pour ne pas les retenter lors 
+
+	/// L'objectif est de filtrer d'abord les noeuds blacklistés
+	// càd ceux qui ont échoué une fois pour ne pas les retenter lors
 	// du retry (ainsi même si TestPing est à 1O sec, ce même noeud ne
 	// sera pas choisi indéfiniment)
 	var availableNodes []model.NodeInfo
-    for _, n := range nodes {
-        addr := fmt.Sprintf("%s:%d", n.Ip, n.Port)
-        isBlacklisted := false
-        for _, b := range blacklist {
-            if b == addr {
-                isBlacklisted = true
-                break
-            }
-        }
-        if !isBlacklisted {
-            availableNodes = append(availableNodes, n)
-        }
-    }
-	
-	
+	for _, n := range nodes {
+		addr := fmt.Sprintf("%s:%d", n.Ip, n.Port)
+		isBlacklisted := false
+		for _, b := range blacklist {
+			if b == addr {
+				isBlacklisted = true
+				break
+			}
+		}
+		if !isBlacklisted {
+			availableNodes = append(availableNodes, n)
+		}
+	}
+
 	sortedNodes := sortNodesByScore(availableNodes)
-    clusters := make([]LayerGroup, numHops)
-    clusterScores := make([]float64, numHops)
+	clusters := make([]LayerGroup, numHops)
+	clusterScores := make([]float64, numHops)
 
-    //On place les meilleurs noeuds en tête de chaque cluster (ancrage)
-    nodeIdx := 0
-    for i := 0; i < numHops && nodeIdx < len(sortedNodes); i++ {
-        n := sortedNodes[nodeIdx]
-        clusters[i].Addrs = append(clusters[i].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
-        
-        pubKey := parsePublicKey(n.PublicKey) //on convertie la clé string en rsa.PublicKey
-        clusters[i].PubKeys = append(clusters[i].PubKeys, pubKey)
-        clusterScores[i] += calculateNodeScore(n)
-        nodeIdx++
-    }
+	//On place les meilleurs noeuds en tête de chaque cluster (ancrage)
+	nodeIdx := 0
+	for i := 0; i < numHops && nodeIdx < len(sortedNodes); i++ {
+		n := sortedNodes[nodeIdx]
+		pubKey := parsePublicKey(n.PublicKey)
+		if pubKey == nil {
+			nodeIdx++
+			i--
+			continue
+		}
+		clusters[i].Addrs = append(clusters[i].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
+		clusters[i].PubKeys = append(clusters[i].PubKeys, pubKey)
+		clusterScores[i] += calculateNodeScore(n)
+		nodeIdx++
+	}
 
-    //on distribue le reste selon le score le plus faible (remplissage)
-    for nodeIdx < len(sortedNodes) {
-        //on cherche le cluster avec score global le + bas
-        targetIdx := 0
-        minScore := clusterScores[0]
-        for i, s := range clusterScores {
-            if s < minScore {
-                minScore = s
-                targetIdx = i
-            }
-        }
+	//on distribue le reste selon le score le plus faible (remplissage)
+	for nodeIdx < len(sortedNodes) {
+		//on cherche le cluster avec score global le + bas
+		targetIdx := 0
+		minScore := clusterScores[0]
+		for i, s := range clusterScores {
+			if s < minScore {
+				minScore = s
+				targetIdx = i
+			}
+		}
 
-        //vérif des conditions d'arret (si cluster dépasse score max ou nb de noeud max)
-        if clusterScores[targetIdx] >= float64(TargetClusterScore) || len(clusters[targetIdx].Addrs) >= MaxNodesPerCluster {
-            break
-        }
+		//vérif des conditions d'arret (si cluster dépasse score max ou nb de noeud max)
+		if clusterScores[targetIdx] >= float64(TargetClusterScore) || len(clusters[targetIdx].Addrs) >= MaxNodesPerCluster {
+			break
+		}
 
-        //ajout du noeud volatile
-        n := sortedNodes[nodeIdx]
-        clusters[targetIdx].Addrs = append(clusters[targetIdx].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
-        clusters[targetIdx].PubKeys = append(clusters[targetIdx].PubKeys, parsePublicKey(n.PublicKey))
-        clusterScores[targetIdx] += calculateNodeScore(n)
-        nodeIdx++
-    }
+		//ajout du noeud volatile
+		n := sortedNodes[nodeIdx]
+		pubKey := parsePublicKey(n.PublicKey)
+		if pubKey == nil {
+			nodeIdx++
+			continue
+		}
+		clusters[targetIdx].Addrs = append(clusters[targetIdx].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
+		clusters[targetIdx].PubKeys = append(clusters[targetIdx].PubKeys, pubKey)
+		clusterScores[targetIdx] += calculateNodeScore(n)
+		nodeIdx++
+	}
 
-    //avertissement si le score final est bas (f° en "mode dégradé")
-    for i, s := range clusterScores {
-        if s < float64(TargetClusterScore)*0.5 {
-            fmt.Printf(" [!] Warning: Cluster %d is weak (Score: %.1f)\n", i+1, s)
-        }
-    }
-   
+	//avertissement si le score final est bas (f° en "mode dégradé")
+	for i, s := range clusterScores {
+		if s < float64(TargetClusterScore)*0.5 {
+			fmt.Printf(" [!] Warning: Cluster %d is weak (Score: %.1f)\n", i+1, s)
+		}
+	}
+
 	var totalScore float64
-    for _, s := range clusterScores {
-        totalScore += s
-    }
-    avgScore := totalScore / float64(numHops)
-    return clusters, avgScore
+	for _, s := range clusterScores {
+		totalScore += s
+	}
+	avgScore := totalScore / float64(numHops)
+	return clusters, avgScore
 
 }

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	//"os"
 	"project/node_server/model"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -38,9 +39,16 @@ func InitTable() error {
     );
     `
 	_, err := Db.Exec(sqlStmt)
-	return err
-}
+	if err != nil {
+		return err
+	}
 
+	// Migration : ajouter les colonnes si elles manquent (vieux .db)
+	Db.Exec("ALTER TABLE nodes ADD COLUMN availability_score INTEGER DEFAULT 0")
+	Db.Exec("ALTER TABLE nodes ADD COLUMN network_score INTEGER DEFAULT 0")
+
+	return nil
+}
 func AddNode(node *model.NodeInfo) error {
 	uuid := node.Uuid
 	name := node.Name
@@ -77,8 +85,8 @@ func GetNodesList(limit int) ([]model.NodeInfo, error) {
 
 		err = rows.Scan(&n.Uuid, &n.Name, &n.Ip, &n.Port, &n.PublicKey, &n.AvailabilityScore, &n.NetworkScore)
 		if err != nil {
-            continue
-        }
+			continue
+		}
 
 		nodes = append(nodes, n)
 	}
