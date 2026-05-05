@@ -124,6 +124,11 @@ func main() {
 		fmt.Println("Error joining server:", err)
 	}
 
+	if os.Getenv("ENABLE_WEB") == "1" {
+		startStdoutBridge() // ← ligne 1 : intercepte TOUS les fmt.*
+		go startWebUI(node, serverAddr, publicKeys)
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("  FETCH:<ip>:<port>                              - Récupérer la clé publique d'un noeud")
 	fmt.Println("  MSG:<ip>:<port>:<message>                      - Message direct")
@@ -652,16 +657,16 @@ func encryptForNode(plaintext []byte, pubKey *rsa.PublicKey) (string, error) {
 
 // Fonction pour déduire les scores (disponibilité et réseau) en fonction du profil du docker
 func GetScoresFromProfile(profile string) (int, int) {
-    switch profile {
-    case "server":
-        return 100, 100
+	switch profile {
+	case "server":
+		return 100, 100
 	case "laptop_WIFI7":
 		return 60, 85
-    case "smartphone_4G":
-        return 30, 75
-    case "smartphone_2G":
-        return 20, 10
-    default:
-        return 15, 15 // Score par défaut choix arbitraire
-    }
+	case "smartphone_4G":
+		return 30, 75
+	case "smartphone_2G":
+		return 20, 10
+	default:
+		return 15, 15 // Score par défaut choix arbitraire
+	}
 }
