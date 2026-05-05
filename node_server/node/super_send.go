@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	// mrand "math/rand"
+	"math/rand"
 	"project/node_server/model"
 	"sort"
 	"strconv"
@@ -26,6 +26,10 @@ const (
 type LayerGroup struct {
 	Addrs   []string
 	PubKeys []*rsa.PublicKey
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
 }
 
 // Fonction qui décode de la base64 vers []byte puis parse en PKIX.
@@ -369,9 +373,37 @@ func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[stri
 	clusters := make([]LayerGroup, numHops)
 	clusterScores := make([]float64, numHops)
 
-	//On place les meilleurs noeuds en tête de chaque cluster (ancrage)
+	//On place les meilleurs noeuds en tête de chaque cluster (ancrage),
+	//logique aléatoire ou on peut prendre le deuxième dans 15% des cas
+	//et le troisème dans 5% des cas.
+
 	nodeIdx := 0
 	for i := 0; i < numHops && nodeIdx < len(sortedNodes); i++ {
+		remaining := len(sortedNodes) - nodeIdx
+		pickOffset := 0 // Par défaut, on prend le meilleur noeud (num 1)
+
+		if remaining >= 2 {
+			r := rand.Intn(100)
+			if r >= 70 && r < 85 {
+				// 15% de chance de prendre le 2ème meilleur noeud
+				pickOffset = 1
+			} else if r >= 85 && r < 95 && remaining >= 3 {
+				pickOffset = 2
+				// 10% de chance de prendre 3ème meilleur noeud
+			} else if r >= 95 && remaining >= 4 { 
+				// 5% de chance de prendre le 4ème meilleur noeud
+				pickOffset = 3
+			}
+		}
+
+		//swip entre le nœud choisi avec celui à la position nodeIdx 
+		// pour ne pas perdre le meilleur noeud pour le cluster suivant
+		if pickOffset > 0 {
+			sortedNodes[nodeIdx], sortedNodes[nodeIdx+pickOffset] = sortedNodes[nodeIdx+pickOffset], sortedNodes[nodeIdx]
+		}
+
+	// nodeIdx := 0
+	// for i := 0; i < numHops && nodeIdx < len(sortedNodes); i++ {
 		n := sortedNodes[nodeIdx]
 		pubKey := parsePublicKey(n.PublicKey)
 		if pubKey == nil {
@@ -385,11 +417,13 @@ func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[stri
 		nodeIdx++
 	}
 
+	////
+
 	//on distribue le reste selon le score le plus faible (remplissage)
 	for nodeIdx < len(sortedNodes) {
 		//on cherche le cluster avec score global le + bas
 		targetIdx := 0
-		minScore := clusterScores[0]
+		minScore := 999999.0 //inf
 		for i, s := range clusterScores {
 			if s < minScore {
 				minScore = s
@@ -398,27 +432,33 @@ func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[stri
 		}
 
 		//vérif des conditions d'arret (si cluster dépasse score max ou nb de noeud max)
-		if clusterScores[targetIdx] >= float64(TargetClusterScore) || len(clusters[targetIdx].Addrs) >= MaxNodesPerCluster {
-			break
-		}
+		//if clusterScores[targetIdx] >= float64(TargetClusterScore) || len(clusters[targetIdx].Addrs) >= MaxNodesPerCluster {
+		//	break
+		//}
 
+		/////
 		//ajout du noeud volatile
-		n := sortedNodes[nodeIdx]
-		pubKey := parsePublicKey(n.PublicKey)
-		if pubKey == nil {
+		if targetIdx != -1 {
+			n := sortedNodes[nodeIdx]
+			pubKey := parsePublicKey(n.PublicKey)
+			if pubKey != nil {
+				clusters[targetIdx].Addrs = append(clusters[targetIdx].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
+				clusters[targetIdx].PubKeys = append(clusters[targetIdx].PubKeys, pubKey)
+				clusterScores[targetIdx] += calculateNodeScore(n)
+			}
 			nodeIdx++
-			continue
+		} else {
+			break 
 		}
-		clusters[targetIdx].Addrs = append(clusters[targetIdx].Addrs, n.Ip+":"+strconv.Itoa(n.Port))
-		clusters[targetIdx].PubKeys = append(clusters[targetIdx].PubKeys, pubKey)
-		clusterScores[targetIdx] += calculateNodeScore(n)
-		nodeIdx++
 	}
 
 	//avertissement si le score final est bas (f° en "mode dégradé")
-	for i, s := range clusterScores {
-		if s < float64(TargetClusterScore)*0.5 {
-			fmt.Printf(" [!] Warning: Cluster %d is weak (Score: %.1f)\n", i+1, s)
+	for i := range clusters {
+		if len(clusters[i].Addrs) > 1 {
+			rand.Shuffle(len(clusters[i].Addrs), func(j, k int) {
+				clusters[i].Addrs[j], clusters[i].Addrs[k] = clusters[i].Addrs[k], clusters[i].Addrs[j]
+				clusters[i].PubKeys[j], clusters[i].PubKeys[k] = clusters[i].PubKeys[k], clusters[i].PubKeys[j]
+			})
 		}
 	}
 
