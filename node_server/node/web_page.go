@@ -546,7 +546,14 @@ async function toggleStream() {
         const frameBase64 = canvas.toDataURL('image/webp', 0.6);
         const relays = document.getElementById('relay-count').value;
         const mode = modeSelect.value;
-        const cmd = 'SEND:' + relays + ':' + selectedNode.ip + ':' + selectedNode.port + ':VIDEO:' + frameBase64;
+        const sendType = sendTypeSelect.value;
+        let cmd;
+        if (sendType === 'ssend') {
+          const groupSize = parseInt(document.getElementById('ssend-group').value) || 3;
+          cmd = 'SSEND:' + groupSize + ':' + relays + ':' + selectedNode.ip + ':' + selectedNode.port + ':VIDEO:' + frameBase64;
+        } else {
+          cmd = 'SEND:' + relays + ':' + selectedNode.ip + ':' + selectedNode.port + ':VIDEO:' + frameBase64;
+        }
         fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Cmd: cmd, Mode: mode }) });
       }, 66);
     } catch (err) { alert('Erreur webcam : ' + err); }
