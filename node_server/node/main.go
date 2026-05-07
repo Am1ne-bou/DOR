@@ -94,7 +94,7 @@ func main() {
 	publicKeys := make(map[string]CachedKey)
 
 	var id string
-	if len(os.Args) >= 2 {
+	if len(os.Args) >= 2 && !strings.HasPrefix(os.Args[1], "--") {
 		id = os.Args[1]
 	} else {
 		id = os.Getenv("NODE_ID")
