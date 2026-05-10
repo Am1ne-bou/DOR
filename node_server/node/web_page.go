@@ -181,7 +181,7 @@ select:focus{border-color:var(--blue-hov); outline:none}
     <div class="chat-input">
       <select id="send-type" class="send-type-select" onchange="onSendTypeChange()">
         <option value="send">📨 SEND</option>
-        <option value="ssend">⚡ SSEND</option>
+        <option value="ssend">🕸 SSEND</option>
       </select>
       <select id="relay-count" class="relay-select" onchange="updateRelayLabel()">
         <option value="1">1 saut</option>
@@ -253,7 +253,7 @@ function renderConversation() {
       row.className = 'msg-row me-row';
       const b = document.createElement('div');
       b.className = 'msg me' + (m.sendType === 'ssend' ? ' ssend-me' : '');
-      b.textContent = (m.sendType === 'ssend' ? '⚡ ' : '') + m.text;
+      b.textContent = (m.sendType === 'ssend' ? '🕸 ' : '') + m.text;
       row.appendChild(b);
       const st = document.createElement('span'); st.className = 'msg-status';
       st.textContent = m.status === 'pending' ? '⏳' : m.status === 'ok' ? '✔' : '✖';
@@ -407,7 +407,7 @@ function onSendTypeChange() {
   sendTypeSelect.classList.toggle('ssend', isSSend);
   if (isSSend) {
     sendBtn.classList.add('ssend-active');
-    sendBtn.textContent = 'SSEND ⚡';
+    sendBtn.textContent = '🕸 Envoyer ➤';
   } else {
     sendBtn.classList.remove('ssend-active');
     sendBtn.textContent = 'Envoyer ➤';
