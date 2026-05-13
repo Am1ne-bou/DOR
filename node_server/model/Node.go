@@ -213,7 +213,11 @@ func (n *Node) handlerroutine(conn net.Conn) {
 			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.Next)
 			return
 		}
-		parts := strings.Split(layer.MsgID, ":")
+		parts := strings.SplitN(layer.MsgID, ":", 2)
+		if len(parts) != 2 {
+			fmt.Printf("[%s] Erreur: MsgID format invalide: %s\n", n.ID, layer.MsgID)
+			return
+		}
 		tosend := parts[0]
 		toreceive := parts[1]
 

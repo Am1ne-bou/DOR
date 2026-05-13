@@ -15,6 +15,7 @@ import (
 	"project/node_server/model"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -73,9 +74,19 @@ func FetchKeyFromServer(addr string, serverAddr string) (*rsa.PublicKey, error) 
 		return nil, fmt.Errorf("invalid response")
 	}
 
-	publicBytes, _ := base64.StdEncoding.DecodeString(parts[1])
-	pubKey, _ := x509.ParsePKIXPublicKey(publicBytes)
-	return pubKey.(*rsa.PublicKey), nil
+	publicBytes, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(publicBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse public key: %w", err)
+	}
+	rsaKey, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("key is not RSA")
+	}
+	return rsaKey, nil
 }
 
 type CachedKey struct {
@@ -83,8 +94,28 @@ type CachedKey struct {
 	ExpiresAt time.Time
 }
 
+type KeyCache struct {
+	mu sync.RWMutex
+	m  map[string]CachedKey
+}
+
+func newKeyCache() *KeyCache { return &KeyCache{m: make(map[string]CachedKey)} }
+
+func (c *KeyCache) get(k string) (CachedKey, bool) {
+	c.mu.RLock()
+	v, ok := c.m[k]
+	c.mu.RUnlock()
+	return v, ok
+}
+
+func (c *KeyCache) set(k string, v CachedKey) {
+	c.mu.Lock()
+	c.m[k] = v
+	c.mu.Unlock()
+}
+
 func main() {
-	publicKeys := make(map[string]CachedKey)
+	publicKeys := newKeyCache()
 
 	var id string
 	if len(os.Args) >= 2 && !strings.HasPrefix(os.Args[1], "--") {
@@ -169,10 +200,10 @@ func main() {
 				continue
 			}
 			if pubKey, ok := pubKeyInterface.(*rsa.PublicKey); ok {
-				publicKeys[targetAddr] = CachedKey{
+				publicKeys.set(targetAddr, CachedKey{
 					Key:       pubKey,
 					ExpiresAt: time.Now().Add(30 * time.Second),
-				}
+				})
 				fmt.Printf("Enregistrement de la clé (publique) de %s réalisé avec succès!\n", targetAddr)
 			}
 
@@ -309,7 +340,7 @@ func SendWithRetry(
 	destAddr string,
 	message string,
 	numRelays int,
-	publicKeys map[string]CachedKey,
+	publicKeys *KeyCache,
 	maxRetries int,
 	currentTry int,
 	startTime time.Time,
@@ -452,7 +483,7 @@ func Encapsulator_func(
 	message string,
 	route []string,
 	returnRoute []string,
-	publicKeys map[string]CachedKey,
+	publicKeys *KeyCache,
 	serverAddr string,
 	senderAddr string,
 ) (string, string, string, error) {
@@ -461,13 +492,13 @@ func Encapsulator_func(
 		allNodes = append(allNodes, returnRoute...)
 	}
 	for _, port := range allNodes {
-		cached, ok := publicKeys[port]
+		cached, ok := publicKeys.get(port)
 		if !ok || time.Now().After(cached.ExpiresAt) {
 			key, err := FetchKeyFromServer(port, serverAddr)
 			if err != nil {
 				return "", "", "", fmt.Errorf("error fetching public key for %s: %v", port, err)
 			}
-			publicKeys[port] = CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)}
+			publicKeys.set(port, CachedKey{Key: key, ExpiresAt: time.Now().Add(30 * time.Second)})
 		}
 	}
 
@@ -514,12 +545,13 @@ func Encapsulator_func(
 func encryptOnionLayers(
 	innerLayer *model.OnionLayer,
 	route []string,
-	publicKeys map[string]CachedKey,
+	publicKeys *KeyCache,
 	senderAddr string,
 	nackArray []string,
 ) (string, error) {
 	innerLayerString := innerLayer.OnionlayerToString()
-	currentPayload, err := encryptForNode([]byte(innerLayerString), publicKeys[route[len(route)-1]].Key)
+	lastCached, _ := publicKeys.get(route[len(route)-1])
+	currentPayload, err := encryptForNode([]byte(innerLayerString), lastCached.Key)
 	if err != nil {
 		return "", err
 	}
@@ -535,7 +567,8 @@ func encryptOnionLayers(
 			From:  prevNode,
 			Data:  currentPayload,
 		}
-		currentPayload, err = encryptForNode([]byte(relayLayer.OnionlayerToString()), publicKeys[route[i]].Key)
+		nodeCached, _ := publicKeys.get(route[i])
+		currentPayload, err = encryptForNode([]byte(relayLayer.OnionlayerToString()), nodeCached.Key)
 		if err != nil {
 			return "", err
 		}
@@ -545,7 +578,9 @@ func encryptOnionLayers(
 
 func encryptForNode(plaintext []byte, pubKey *rsa.PublicKey) (string, error) {
 	aesKey := make([]byte, 32)
-	io.ReadFull(rand.Reader, aesKey)
+	if _, err := io.ReadFull(rand.Reader, aesKey); err != nil {
+		return "", fmt.Errorf("rand: %w", err)
+	}
 	encPlaintext, err := model.EncryptAES(aesKey, plaintext)
 	if err != nil {
 		return "", err

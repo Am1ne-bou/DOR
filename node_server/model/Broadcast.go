@@ -31,7 +31,9 @@ func BroadcastEncrypt(plaintext []byte, pubKeys []*rsa.PublicKey) (string, error
 	}
 
 	aesKey := make([]byte, 32)
-	io.ReadFull(rand.Reader, aesKey)
+	if _, err := io.ReadFull(rand.Reader, aesKey); err != nil {
+		return "", fmt.Errorf("rand: %w", err)
+	}
 
 	encPayload, err := EncryptAES(aesKey, plaintext)
 	if err != nil {

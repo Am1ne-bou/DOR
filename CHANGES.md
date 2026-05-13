@@ -102,3 +102,41 @@ git push origin --force --all
 ```
 
 After pushing, GitHub will show the pem/key files as gone from all commits.
+
+---
+
+## [2026-05-13] High-priority bug fixes
+
+### node_server/node/main.go -- FetchKeyFromServer panic
+Previously: errors from base64.DecodeString and x509.ParsePKIXPublicKey discarded,
+unchecked type-assert -> panic on any malformed server response.
+Fix: check each error; safe type-assert with ok check.
+
+### node_server/node/main.go -- io.ReadFull ignored in encryptForNode
+Previously: return value of io.ReadFull(rand.Reader, aesKey) discarded -> silent
+failure if entropy source fails, producing a zero-filled AES key.
+Fix: check error, return it.
+
+### node_server/model/Broadcast.go -- io.ReadFull ignored in BroadcastEncrypt
+Same as above for the broadcast path.
+Fix: check error, return it.
+
+### node_server/model/Node.go -- strings.Split panic on bad MsgID
+Previously: strings.Split(layer.MsgID, ":") with no length check -> panic if
+MsgID has no colon (malformed relay packet).
+Fix: SplitN + len check, early return with error log.
+
+### node_server/node/{main,web,super_send}.go -- publicKeys map race
+Previously: map[string]CachedKey passed and written from multiple goroutines
+(SendWithRetry, processCmd, SendWithRetrySuper) without synchronization.
+Fix: new KeyCache struct (sync.RWMutex + map) with get/set methods. All callers
+updated to *KeyCache. BuildSmartClusters had the param but never used it -- removed.
+
+### node_server/node/web.go -- /cmd endpoint binds 0.0.0.0
+Previously: http.ListenAndServe(":<port>", ...) exposed the control interface on
+all network interfaces.
+Fix: bind to 127.0.0.1 by default. Override with WEB_BIND env var (e.g.
+WEB_BIND=0.0.0.0 in Docker if external access is needed).
+
+### .gitignore -- missing *.pem, *.key, .idea/
+Added entries to prevent accidental commit of TLS keys and IDE files.
