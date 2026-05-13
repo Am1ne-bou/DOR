@@ -13,14 +13,16 @@ done
 lsof -ti :8080 | xargs kill -9
 tmux kill-session -t $SESSION
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 tmux new-session -d -s $SESSION -n "server" \
-"cd node_server/List_Serveur && go run serveur.go; bash"
+"cd '$ROOT/node_server/List_Serveur' && go run serveur.go; bash"
 
 sleep 2
 
 for i in $(seq 1 $N); do
     tmux new-window -t $SESSION:$i -n "node-$i" \
-    "cd node_server/node && go run main.go node-$i"
+    "cd '$ROOT/node_server/node' && go run main.go node-$i"
 done
 
 tmux select-window -t $SESSION:0

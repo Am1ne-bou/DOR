@@ -65,7 +65,7 @@ func FetchKeyFromServer(addr string, serverAddr string) (*rsa.PublicKey, error) 
 	response = strings.TrimSpace(response)
 
 	if strings.HasPrefix(response, "ERROR:") {
-		return nil, fmt.Errorf(response)
+		return nil, fmt.Errorf("%s", response)
 	}
 
 	parts := strings.SplitN(response, ":", 2)
