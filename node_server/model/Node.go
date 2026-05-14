@@ -150,6 +150,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
 	if err != nil {
+		if err != io.EOF {
+			slog.Debug("handlerroutine read error", "id", n.ID, "err", err)
+		}
 		return
 	}
 
