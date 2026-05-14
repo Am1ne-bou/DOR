@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// TODO: add TTL field to prevent infinite relay loops if a node routes back to itself
 type OnionLayer struct {
 	Type    string // RELAY, FINAL, ACK
 	MsgID   string
@@ -16,6 +17,7 @@ type OnionLayer struct {
 	Message string // FINAL seulement
 }
 
+// TODO: add message fragmentation -- RSA-OAEP(2048) caps plaintext at ~214 bytes, large messages silently fail
 func (layer OnionLayer) OnionlayerToString() string {
 	str := fmt.Sprintf("%s|%s|%s|%s|%s|%s", layer.Type, layer.MsgID, layer.Next, layer.From, layer.Data, layer.Message)
 	return str
@@ -37,6 +39,7 @@ func StringToOnionLayer(str string) (OnionLayer, error) {
 	return ol, nil
 }
 
+// TODO: switch to crypto/rand 128-bit UUID -- 10 decimal digits still has birthday collision risk at scale
 func GenerateMsgID(prefix ...string) string {
 	str := "msg-"
 	if len(prefix) > 0 && prefix[0] != "" {

@@ -67,17 +67,13 @@ func AddNode(node *model.NodeInfo) error {
 
 func GetNodesList(limit int) ([]model.NodeInfo, error) {
 	var nodes []model.NodeInfo
+	// TODO: weighted selection using availability_score instead of pure random
 	rows, err := Db.Query("SELECT uuid, name, ip, port, publicKey, availability_score, network_score FROM nodes ORDER BY RANDOM() LIMIT ?", limit)
 	if err != nil {
 		return []model.NodeInfo{}, err
 	}
 
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-
-		}
-	}(rows)
+	defer rows.Close()
 
 	for rows.Next() {
 		var n model.NodeInfo
@@ -109,6 +105,8 @@ func RemoveNode(nodeID string) error {
 	return err
 }
 
+// TODO: add node heartbeat -- nodes ping directory every N seconds, mark stale entries inactive instead of serving dead addresses
+// TODO: track ACK/NACK ratio per node over time to build a reputation score and bias routing away from unreliable nodes
 func ClearTable() error {
 	if _, err := Db.Exec("DELETE FROM nodes"); err != nil {
 		return err

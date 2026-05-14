@@ -68,6 +68,8 @@ func startStdoutBridge() {
 	}()
 }
 
+// TODO: expose /metrics endpoint (Prometheus) -- messages relayed, ACK rate, NACK rate, active connections
+// TODO: add live routing graph to dashboard -- show which nodes relayed each message in real time
 func startWebUI(n *model.Node, srvAddr string, keys *KeyCache) {
 	port := 9090
 	if p := os.Getenv("WEB_PORT"); p != "" {

@@ -127,6 +127,7 @@ func Encapsulator_func_super(
 	return forwardPayload, msgID, nackArray[0], nil
 }
 
+// TODO: implement multi-path routing -- send via 2 independent routes simultaneously, deliver on first ACK
 func SendWithRetrySuper(
 	node *model.Node,
 	serverAddr string,
@@ -318,6 +319,7 @@ func sortNodesByScore(nodes []model.NodeInfo) []model.NodeInfo {
 	return nodes
 }
 
+// TODO: split BuildSmartClusters into node/cluster.go, this file mixes cluster logic, encapsulation and retry
 func BuildSmartClusters(nodes []model.NodeInfo, numHops int, blacklist []string) ([]LayerGroup, float64) {
 	var availableNodes []model.NodeInfo
 	for _, n := range nodes {

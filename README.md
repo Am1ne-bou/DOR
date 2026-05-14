@@ -1,3 +1,9 @@
+<!-- TODO: add architecture diagram (ASCII or Mermaid) showing sender -> relay1 -> relay2 -> final -> ACK path -->
+<!-- TODO: add demo GIF showing a message being routed through 3 nodes with ACK received -->
+<!-- TODO: add test coverage badge -- go test -coverprofile + shields.io badge -->
+<!-- TODO: add GitHub Actions badge -- go build + go vet + go test on every push -->
+<!-- TODO: add Makefile with targets: make build, make test, make docker, make lint -->
+<!-- TODO: formalize protocol spec -- message types, wire format, state machine (currently partial in README) -->
 # DOR - Dynamic Onion Routing
 
 P2P anonymous communication system written in Go.

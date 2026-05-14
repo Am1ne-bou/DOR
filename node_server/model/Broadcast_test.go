@@ -150,3 +150,5 @@ func TestBroadcastDecrypt_InvalidFormat(t *testing.T) {
 		t.Fatal("should fail")
 	}
 }
+
+// TODO: add BenchmarkBroadcastEncrypt/Decrypt with 1, 3, 5 keys -- track crypto cost vs group size

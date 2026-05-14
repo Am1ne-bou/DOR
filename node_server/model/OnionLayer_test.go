@@ -80,3 +80,7 @@ func TestStringToOnionLayer_PipeInMessage(t *testing.T) {
 		t.Errorf("expected message with pipes, got '%s'", ol.Message)
 	}
 }
+
+// TODO: add integration test for full onion route (3 nodes end-to-end, send + ACK received)
+// TODO: add fuzz test on StringToOnionLayer -- go test -fuzz=FuzzStringToOnionLayer
+// TODO: add benchmark for AES enc/dec and RSA enc/dec -- go test -bench=. and publish results in README

@@ -28,13 +28,14 @@ import (
 
 var serverCert []byte
 
+// TODO: replace static RSA session key with ephemeral ECDH (X25519) for forward secrecy
 func DialDirectoryServer(addr string) (*tls.Conn, error) {
 	certPool := x509.NewCertPool() //liste de certificats (vide pr l'instant)
 	certPool.AppendCertsFromPEM(serverCert)
 
 	config := &tls.Config{
 		RootCAs:            certPool, //notre liste de certificat de confiance
-		InsecureSkipVerify: true,     // TODO: générer un certificat avec les bonnes IP/SAN
+		InsecureSkipVerify: true, // TODO: replace with proper cert validation once nodes have real SAN certs
 	}
 
 	return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
@@ -53,6 +54,7 @@ type Node struct {
 	Listener      net.Listener
 	ServerAddr    string                // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
 	NodeIP        string                // IP du nœud vue par le serveur
+	// TODO: PendingACKs should have TTL-based eviction, map grows unbounded under packet loss
 	PendingACKs   map[string]chan bool  // msgID  canal de notification
 	PendingRelays map[string]Nackstruct // recievedNackID  Nackstruct
 	Mu            sync.Mutex            // protège PendingACKs
@@ -140,11 +142,15 @@ func (n *Node) GetNodesList() (string, error) {
 
 ////
 
+// TODO: add timestamp+nonce to each onion layer and reject replays within a TTL window
 func (n *Node) handlerroutine(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	line, _ := reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
 
 	line = strings.TrimSpace(line)
 	if line == "" {

@@ -114,6 +114,7 @@ func (c *KeyCache) set(k string, v CachedKey) {
 	c.mu.Unlock()
 }
 
+// TODO: replace fmt.Println with slog (stdlib since Go 1.21) -- add log levels and JSON output mode
 func main() {
 	publicKeys := newKeyCache()
 
@@ -334,6 +335,7 @@ func main() {
 	}
 }
 
+// TODO: make MaxRetries and RetryDelay configurable via env vars instead of hardcoded
 func SendWithRetry(
 	node *model.Node,
 	serverAddr string,
