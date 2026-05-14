@@ -18,10 +18,6 @@ import (
 
 const MaxSampleNodes = 500
 
-//var mu sync.Mutex
-//var nodes = make(map[net.Conn]model.Node)
-//var nbrNodes int = 0
-
 func main() {
 
 	//chargement du certificat

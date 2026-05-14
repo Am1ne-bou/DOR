@@ -370,7 +370,6 @@ func SendWithRetry(
 	entries := strings.Split(listData, ",")
 
 	var candidates []string
-	destFound := false
 	nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
 
 	for _, entry := range entries {
@@ -381,14 +380,10 @@ func SendWithRetry(
 		ip := fields[1]
 		port := fields[2]
 		addr := ip + ":" + port
-		if addr == destAddr {
-			destFound = true
-		}
 		if addr != nodeAddr && addr != destAddr {
 			candidates = append(candidates, addr)
 		}
 	}
-	_ = destFound
 
 	if numRelays > len(candidates) {
 		numRelays = len(candidates)

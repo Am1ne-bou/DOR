@@ -2,7 +2,6 @@ package data
 
 import (
 	"database/sql"
-	"strconv"
 	//"os"
 	"project/node_server/model"
 
@@ -98,36 +97,6 @@ func GetNodesList(limit int) ([]model.NodeInfo, error) {
 	return nodes, nil
 }
 
-func getAddr(nodeId string) (string, error) {
-	var out string
-
-	rows, err := Db.Query("SELECT DISTINCT ip, port FROM nodes WHERE name = ?", nodeId)
-	if err != nil {
-		return "", err
-	}
-
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-
-		}
-	}(rows)
-
-	for rows.Next() {
-		var ip string
-		var port int
-
-		err = rows.Scan(&ip, &port)
-		out = ip + ":" + strconv.Itoa(port)
-	}
-
-	if err = rows.Err(); err != nil {
-		return "", err
-	}
-
-	return out, nil
-}
-
 func UpdateNodeKey(name string, newKey string) error {
 	_, err := Db.Exec("UPDATE nodes SET publicKey = ? WHERE name = ?", newKey, name)
 	return err
@@ -141,7 +110,9 @@ func RemoveNode(nodeID string) error {
 }
 
 func ClearTable() error {
-	Db.Exec("DELETE FROM nodes")
+	if _, err := Db.Exec("DELETE FROM nodes"); err != nil {
+		return err
+	}
 	_, err := Db.Exec("DELETE FROM sqlite_sequence WHERE name='nodes'")
 	return err
 }

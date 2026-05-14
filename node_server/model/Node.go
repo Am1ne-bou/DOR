@@ -240,7 +240,10 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		}
 		if !sent {
 			fmt.Printf("[%s] Tout le groupe Next offline, NACK\n", n.ID)
-			// try each addr in From group for NACK propagation
+			// nobody will send toreceive back to us; clean up to avoid leak
+			n.Mu.Lock()
+			delete(n.PendingRelays, toreceive)
+			n.Mu.Unlock()
 			for _, fromAddr := range ParseAddresses(layer.From) {
 				if n.SendTo(fromAddr, fmt.Sprintf("NACK:%s", tosend)) == nil {
 					break
@@ -308,10 +311,7 @@ func (n *Node) SendTo(targetAddr string, message string) error {
 
 // Close the node
 func (n *Node) Stop() {
-	fmt.Printf("[%s] Node stopped\n", n.ID)
-
 	// Send QUIT to server to leave the list
-	// TODO: Implement QUIT message to directory server
 	conn, err := DialDirectoryServer(n.ServerAddr)
 	if err == nil {
 		msg := fmt.Sprintf("QUIT:%s\n", n.ID)

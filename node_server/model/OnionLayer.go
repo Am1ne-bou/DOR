@@ -42,7 +42,7 @@ func GenerateMsgID(prefix ...string) string {
 	if len(prefix) > 0 && prefix[0] != "" {
 		str = prefix[0] + "-"
 	}
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 10; i++ {
 		n, _ := rand.Int(rand.Reader, big.NewInt(10))
 		str += string('0' + byte(n.Int64()))
 	}

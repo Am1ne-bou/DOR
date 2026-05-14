@@ -26,10 +26,6 @@ type LayerGroup struct {
 	PubKeys []*rsa.PublicKey
 }
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 func parsePublicKey(keyB64 string) *rsa.PublicKey {
 	pubBytes, err := base64.StdEncoding.DecodeString(keyB64)
 	if err != nil {
