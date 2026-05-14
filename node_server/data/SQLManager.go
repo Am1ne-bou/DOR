@@ -2,7 +2,6 @@ package data
 
 import (
 	"database/sql"
-	"strconv"
 	//"os"
 	"project/node_server/model"
 
@@ -68,17 +67,13 @@ func AddNode(node *model.NodeInfo) error {
 
 func GetNodesList(limit int) ([]model.NodeInfo, error) {
 	var nodes []model.NodeInfo
+	// TODO: weighted selection using availability_score instead of pure random
 	rows, err := Db.Query("SELECT uuid, name, ip, port, publicKey, availability_score, network_score FROM nodes ORDER BY RANDOM() LIMIT ?", limit)
 	if err != nil {
 		return []model.NodeInfo{}, err
 	}
 
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-
-		}
-	}(rows)
+	defer rows.Close()
 
 	for rows.Next() {
 		var n model.NodeInfo
@@ -98,36 +93,6 @@ func GetNodesList(limit int) ([]model.NodeInfo, error) {
 	return nodes, nil
 }
 
-func getAddr(nodeId string) (string, error) {
-	var out string
-
-	rows, err := Db.Query("SELECT DISTINCT ip, port FROM nodes WHERE name = ?", nodeId)
-	if err != nil {
-		return "", err
-	}
-
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-
-		}
-	}(rows)
-
-	for rows.Next() {
-		var ip string
-		var port int
-
-		err = rows.Scan(&ip, &port)
-		out = ip + ":" + strconv.Itoa(port)
-	}
-
-	if err = rows.Err(); err != nil {
-		return "", err
-	}
-
-	return out, nil
-}
-
 func UpdateNodeKey(name string, newKey string) error {
 	_, err := Db.Exec("UPDATE nodes SET publicKey = ? WHERE name = ?", newKey, name)
 	return err
@@ -140,8 +105,12 @@ func RemoveNode(nodeID string) error {
 	return err
 }
 
+// TODO: add node heartbeat -- nodes ping directory every N seconds, mark stale entries inactive instead of serving dead addresses
+// TODO: track ACK/NACK ratio per node over time to build a reputation score and bias routing away from unreliable nodes
 func ClearTable() error {
-	Db.Exec("DELETE FROM nodes")
+	if _, err := Db.Exec("DELETE FROM nodes"); err != nil {
+		return err
+	}
 	_, err := Db.Exec("DELETE FROM sqlite_sequence WHERE name='nodes'")
 	return err
 }

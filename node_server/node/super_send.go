@@ -26,10 +26,6 @@ type LayerGroup struct {
 	PubKeys []*rsa.PublicKey
 }
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 func parsePublicKey(keyB64 string) *rsa.PublicKey {
 	pubBytes, err := base64.StdEncoding.DecodeString(keyB64)
 	if err != nil {
@@ -131,6 +127,7 @@ func Encapsulator_func_super(
 	return forwardPayload, msgID, nackArray[0], nil
 }
 
+// TODO: implement multi-path routing -- send via 2 independent routes simultaneously, deliver on first ACK
 func SendWithRetrySuper(
 	node *model.Node,
 	serverAddr string,
@@ -138,7 +135,7 @@ func SendWithRetrySuper(
 	message string,
 	numHops int,
 	groupSize int,
-	publicKeys map[string]CachedKey,
+	publicKeys *KeyCache,
 	maxRetries int,
 	currentTry int,
 	startTime time.Time,
@@ -189,13 +186,13 @@ func SendWithRetrySuper(
 		if addr == nodeAddr || addr == destAddr {
 			continue
 		}
-		if _, ok := publicKeys[addr]; !ok {
+		if _, ok := publicKeys.get(addr); !ok {
 			key := parsePublicKey(n.PublicKey)
 			if key == nil {
 				fmt.Printf("Clé invalide pour %s, skip\n", addr)
 				continue
 			}
-			publicKeys[addr] = CachedKey{Key: key, ExpiresAt: time.Now().Add(1 * time.Minute)}
+			publicKeys.set(addr, CachedKey{Key: key, ExpiresAt: time.Now().Add(1 * time.Minute)})
 		}
 		candidates = append(candidates, n)
 	}
@@ -209,7 +206,7 @@ func SendWithRetrySuper(
 		return
 	}
 
-	relayGroups, reliability := BuildSmartClusters(candidates, numHops, publicKeys, failedNodes)
+	relayGroups, reliability := BuildSmartClusters(candidates, numHops, failedNodes)
 	reliabilityPercent := (reliability / TargetClusterScore) * 100
 	if reliabilityPercent > 100 {
 		reliabilityPercent = 100
@@ -322,7 +319,8 @@ func sortNodesByScore(nodes []model.NodeInfo) []model.NodeInfo {
 	return nodes
 }
 
-func BuildSmartClusters(nodes []model.NodeInfo, numHops int, publicKeys map[string]CachedKey, blacklist []string) ([]LayerGroup, float64) {
+// TODO: split BuildSmartClusters into node/cluster.go, this file mixes cluster logic, encapsulation and retry
+func BuildSmartClusters(nodes []model.NodeInfo, numHops int, blacklist []string) ([]LayerGroup, float64) {
 	var availableNodes []model.NodeInfo
 	for _, n := range nodes {
 		addr := fmt.Sprintf("%s:%d", n.Ip, n.Port)

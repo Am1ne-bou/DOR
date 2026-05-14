@@ -18,10 +18,7 @@ import (
 
 const MaxSampleNodes = 500
 
-//var mu sync.Mutex
-//var nodes = make(map[net.Conn]model.Node)
-//var nbrNodes int = 0
-
+// TODO: add heartbeat loop -- periodically evict nodes that haven't pinged in > N seconds
 func main() {
 
 	//chargement du certificat
@@ -104,13 +101,9 @@ func acceptConnections(listener net.Listener) {
 	}
 }
 
+// TODO: rate-limit incoming connections per IP to prevent directory server flooding
 func handleConnection(conn net.Conn) {
-	defer func(conn net.Conn) {
-		err := conn.Close()
-		if err != nil {
-
-		}
-	}(conn)
+	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
 

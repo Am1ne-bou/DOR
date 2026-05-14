@@ -637,6 +637,7 @@ fetch('/history').then(r=>r.json()).then(evs=>evs.forEach(processEvent)).catch((
 </body>
 </html>`
 
+// TODO: add live network graph -- visualize routing topology as nodes relay messages (D3.js or similar)
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -4,7 +4,7 @@
 
 set -e
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 echo -e "\033[36m=== Demarrage du projet DOR ===\033[0m"
 

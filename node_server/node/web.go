@@ -68,7 +68,9 @@ func startStdoutBridge() {
 	}()
 }
 
-func startWebUI(n *model.Node, srvAddr string, keys map[string]CachedKey) {
+// TODO: expose /metrics endpoint (Prometheus) -- messages relayed, ACK rate, NACK rate, active connections
+// TODO: add live routing graph to dashboard -- show which nodes relayed each message in real time
+func startWebUI(n *model.Node, srvAddr string, keys *KeyCache) {
 	port := 9090
 	if p := os.Getenv("WEB_PORT"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil {
@@ -81,8 +83,12 @@ func startWebUI(n *model.Node, srvAddr string, keys map[string]CachedKey) {
 	mux.HandleFunc("/nodes", makeHandleNodes(n))
 	mux.HandleFunc("/logs", handleLogs)
 
-	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("[web] Interface disponible sur http://localhost%s\n", addr)
+	bind := os.Getenv("WEB_BIND")
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+	addr := fmt.Sprintf("%s:%d", bind, port)
+	fmt.Printf("[web] Interface disponible sur http://localhost:%d\n", port)
 	go func() {
 		if err := http.ListenAndServe(addr, mux); err != nil {
 			fmt.Printf("[web] ERREUR serveur HTTP : %v\n", err)
@@ -103,7 +109,7 @@ type cmdRequest struct {
 	Mode string `json:"Mode"`
 }
 
-func makeHandleCmd(n *model.Node, keys map[string]CachedKey, srvAddr string) http.HandlerFunc {
+func makeHandleCmd(n *model.Node, keys *KeyCache, srvAddr string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -120,7 +126,7 @@ func makeHandleCmd(n *model.Node, keys map[string]CachedKey, srvAddr string) htt
 	}
 }
 
-func processCmd(input, mode string, n *model.Node, keys map[string]CachedKey, srvAddr string) {
+func processCmd(input, mode string, n *model.Node, keys *KeyCache, srvAddr string) {
 	if input == "" {
 		return
 	}
@@ -151,7 +157,7 @@ func processCmd(input, mode string, n *model.Node, keys map[string]CachedKey, sr
 			return
 		}
 		if pubKey, ok := pubKeyInterface.(*rsa.PublicKey); ok {
-			keys[data] = CachedKey{Key: pubKey, ExpiresAt: time.Now().Add(30 * time.Second)}
+			keys.set(data, CachedKey{Key: pubKey, ExpiresAt: time.Now().Add(30 * time.Second)})
 			fmt.Printf("Enregistrement de la clé (publique) de %s réalisé avec succès!\n", data)
 		}
 

@@ -15,3 +15,5 @@ node_server/tests/results*
 node_server/node/node
 *.db-shm
 *.db-wal
+*.pem
+*.key

@@ -52,8 +52,35 @@ func TestGenerateMsgID(t *testing.T) {
 	if !strings.HasPrefix(id2, "test-") {
 		t.Errorf("Expected ID to start with 'test-', got %s", id2)
 	}
-	
-	if len(id2) != 11 { // "test-" is 5 chars + 6 digits = 11
+
+	if len(id2) != 15 { // "test-" is 5 chars + 10 digits = 15
 		t.Errorf("Expected ID length of 11, got %d", len(id2))
 	}
 }
+
+func TestGenerateMsgID_Uniqueness(t *testing.T) {
+	seen := make(map[string]struct{}, 1000)
+	for i := 0; i < 1000; i++ {
+		id := GenerateMsgID()
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate MsgID generated: %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
+
+func TestStringToOnionLayer_PipeInMessage(t *testing.T) {
+	// SplitN(6) leaves everything after the 5th pipe in parts[5]
+	str := "FINAL|msg-1|next|from|data|hello|world|pipe"
+	ol, err := StringToOnionLayer(str)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ol.Message != "hello|world|pipe" {
+		t.Errorf("expected message with pipes, got '%s'", ol.Message)
+	}
+}
+
+// TODO: add integration test for full onion route (3 nodes end-to-end, send + ACK received)
+// TODO: add fuzz test on StringToOnionLayer -- go test -fuzz=FuzzStringToOnionLayer
+// TODO: add benchmark for AES enc/dec and RSA enc/dec -- go test -bench=. and publish results in README

@@ -1,3 +1,4 @@
+# TODO: switch to multi-stage build -- use golang:1.21 builder then copy binary into scratch/distroless to cut image size ~90%
 FROM alpine:3.14
 
 RUN apk add --no-cache wget tar iproute2 iputils git

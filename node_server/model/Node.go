@@ -28,13 +28,14 @@ import (
 
 var serverCert []byte
 
+// TODO: replace static RSA session key with ephemeral ECDH (X25519) for forward secrecy
 func DialDirectoryServer(addr string) (*tls.Conn, error) {
 	certPool := x509.NewCertPool() //liste de certificats (vide pr l'instant)
 	certPool.AppendCertsFromPEM(serverCert)
 
 	config := &tls.Config{
 		RootCAs:            certPool, //notre liste de certificat de confiance
-		InsecureSkipVerify: true,     // TODO: générer un certificat avec les bonnes IP/SAN
+		InsecureSkipVerify: true, // TODO: replace with proper cert validation once nodes have real SAN certs
 	}
 
 	return tls.Dial("tcp", addr, config) //comme tcp mais avec ajout config certificat
@@ -53,6 +54,7 @@ type Node struct {
 	Listener      net.Listener
 	ServerAddr    string                // Adresse du serveur d'annuaire (ex: "192.168.1.10:8080")
 	NodeIP        string                // IP du nœud vue par le serveur
+	// TODO: PendingACKs should have TTL-based eviction, map grows unbounded under packet loss
 	PendingACKs   map[string]chan bool  // msgID  canal de notification
 	PendingRelays map[string]Nackstruct // recievedNackID  Nackstruct
 	Mu            sync.Mutex            // protège PendingACKs
@@ -140,11 +142,15 @@ func (n *Node) GetNodesList() (string, error) {
 
 ////
 
+// TODO: add timestamp+nonce to each onion layer and reject replays within a TTL window
 func (n *Node) handlerroutine(conn net.Conn) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
-	line, _ := reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
 
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -213,7 +219,11 @@ func (n *Node) handlerroutine(conn net.Conn) {
 			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.Next)
 			return
 		}
-		parts := strings.Split(layer.MsgID, ":")
+		parts := strings.SplitN(layer.MsgID, ":", 2)
+		if len(parts) != 2 {
+			fmt.Printf("[%s] Erreur: MsgID format invalide: %s\n", n.ID, layer.MsgID)
+			return
+		}
 		tosend := parts[0]
 		toreceive := parts[1]
 
@@ -236,7 +246,10 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		}
 		if !sent {
 			fmt.Printf("[%s] Tout le groupe Next offline, NACK\n", n.ID)
-			// try each addr in From group for NACK propagation
+			// nobody will send toreceive back to us; clean up to avoid leak
+			n.Mu.Lock()
+			delete(n.PendingRelays, toreceive)
+			n.Mu.Unlock()
 			for _, fromAddr := range ParseAddresses(layer.From) {
 				if n.SendTo(fromAddr, fmt.Sprintf("NACK:%s", tosend)) == nil {
 					break
@@ -304,10 +317,7 @@ func (n *Node) SendTo(targetAddr string, message string) error {
 
 // Close the node
 func (n *Node) Stop() {
-	fmt.Printf("[%s] Node stopped\n", n.ID)
-
 	// Send QUIT to server to leave the list
-	// TODO: Implement QUIT message to directory server
 	conn, err := DialDirectoryServer(n.ServerAddr)
 	if err == nil {
 		msg := fmt.Sprintf("QUIT:%s\n", n.ID)
