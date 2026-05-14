@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"project/node_server/model"
 	"strconv"
 	"strings"
@@ -140,22 +141,22 @@ func SendWithRetrySuper(
 	failedNodes []string,
 ) {
 	if currentTry >= maxRetries {
+		slog.Warn("abandon after max retries", "dest", destAddr, "tries", maxRetries)
 		elapsed := time.Since(startTime).Milliseconds()
-		fmt.Printf("Abandon après %d tentatives pour %s\n\n", maxRetries, destAddr)
 		fmt.Printf("RESULT_SUPER|%s|ABANDON|%d|%dms\n", destAddr, maxRetries, elapsed)
 		return
 	}
 	if currentTry > 0 {
-		fmt.Printf("Retry %d/%d pour %s\n", currentTry, maxRetries, destAddr)
+		slog.Info("retrying", "dest", destAddr, "try", currentTry, "max", maxRetries)
 	}
 
 	listStr, err := node.GetNodesList()
 	if err != nil {
-		fmt.Println("Erreur récupération liste:", err)
+		slog.Error("get nodes list", "err", err)
 		return
 	}
 	if listStr == "LIST:empty" {
-		fmt.Println("Aucun node disponible")
+		slog.Warn("no nodes available")
 		return
 	}
 
@@ -187,7 +188,7 @@ func SendWithRetrySuper(
 		if _, ok := publicKeys.get(addr); !ok {
 			key := parsePublicKey(n.PublicKey)
 			if key == nil {
-				fmt.Printf("Clé invalide pour %s, skip\n", addr)
+				slog.Warn("invalid public key, skipping", "addr", addr)
 				continue
 			}
 			publicKeys.set(addr, CachedKey{Key: key, ExpiresAt: time.Now().Add(1 * time.Minute)})
@@ -196,11 +197,11 @@ func SendWithRetrySuper(
 	}
 
 	if numHops < MinClusters {
-		fmt.Printf("Nombre de hops %d < MinClusters %d, ajusté\n", numHops, MinClusters)
+		slog.Warn("numHops below MinClusters, adjusted", "numHops", numHops, "min", MinClusters)
 		numHops = MinClusters
 	}
 	if len(candidates) < numHops {
-		fmt.Printf("Pas assez de noeuds (%d) pour %d hops\n", len(candidates), numHops)
+		slog.Warn("not enough nodes for requested hops", "candidates", len(candidates), "hops", numHops)
 		return
 	}
 
@@ -209,11 +210,11 @@ func SendWithRetrySuper(
 	if reliabilityPercent > 100 {
 		reliabilityPercent = 100
 	}
-	fmt.Printf("Route construite. Fiabilité estimée : %.1f%%\n", reliabilityPercent)
+	slog.Info("route built", "reliability_pct", reliabilityPercent)
 
 	destKey, err := FetchKeyFromServer(destAddr, serverAddr)
 	if err != nil {
-		fmt.Println("Erreur : Clé de destination introuvable.")
+		slog.Error("destination key not found", "dest", destAddr, "err", err)
 		return
 	}
 	destGroup := LayerGroup{Addrs: []string{destAddr}, PubKeys: []*rsa.PublicKey{destKey}}
@@ -233,7 +234,7 @@ func SendWithRetrySuper(
 
 	onion, msgID, firstNackID, err := Encapsulator_func_super(message, route, returnRoute, nodeAddr)
 	if err != nil {
-		fmt.Println("Erreur encapsulation:", err)
+		slog.Error("encapsulation failed", "err", err)
 		return
 	}
 
@@ -260,11 +261,11 @@ func SendWithRetrySuper(
 			sent = true
 			break
 		}
-		fmt.Printf("Candidat %s injoignable, ajout à la blacklist\n", addr)
+		slog.Warn("candidate unreachable, blacklisting", "addr", addr)
 		failedNodes = append(failedNodes, addr)
 	}
 	if !sent {
-		fmt.Println("Erreur envoi: tout le premier groupe offline")
+		slog.Error("all first-group nodes offline")
 		node.Mu.Lock()
 		delete(node.PendingACKs, msgID)
 		delete(node.PendingACKs, firstNackID)
@@ -273,18 +274,18 @@ func SendWithRetrySuper(
 		return
 	}
 
-	fmt.Printf("Message envoyé (msgID: %s), attente ACK...\n\n", msgID)
+	slog.Info("message sent, waiting ACK", "msgID", msgID)
 
 	go func(id string, nackID string, ch chan bool) {
 		select {
 		case success := <-ch:
 			elapsed := time.Since(startTime).Milliseconds()
 			if success {
-				fmt.Printf("ACK confirmé pour %s\n\n", id)
+				slog.Info("ACK received", "msgID", id)
 				fmt.Printf("RESULT_SUPER|%s|ACK|%d|%dms\n", destAddr, currentTry, elapsed)
 				Telemetry(destAddr, nodeAddr, "ACK", "", exid, 1)
 			} else {
-				fmt.Printf("NACK reçu pour %s - retry...\n\n", id)
+				slog.Warn("NACK received, retrying", "msgID", id)
 				Telemetry(route[0].Addrs[0], nodeAddr, "NACK", "", exid, 1)
 				node.Mu.Lock()
 				delete(node.PendingACKs, id)
@@ -294,7 +295,7 @@ func SendWithRetrySuper(
 			}
 		case <-time.After(8 * time.Second):
 			elapsed := time.Since(startTime).Milliseconds()
-			fmt.Printf("Timeout ACK pour %s\n\n", id)
+			slog.Warn("ACK timeout", "msgID", id)
 			fmt.Printf("RESULT_SUPER|%s|TIMEOUT|%d|%dms\n", destAddr, currentTry, elapsed)
 			Telemetry(route[0].Addrs[0], nodeAddr, "NACK", "timeout", exid, 1)
 			node.Mu.Lock()

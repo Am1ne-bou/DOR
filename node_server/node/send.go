@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	mrand "math/rand"
 	"strings"
 	"time"
@@ -22,23 +23,23 @@ func SendWithRetry(
 	startTime time.Time,
 ) {
 	if currentTry >= maxRetries {
-		fmt.Printf("Abandon après %d tentatives pour %s\n\n", maxRetries, destAddr)
+		slog.Warn("abandon after max retries", "dest", destAddr, "tries", maxRetries)
 		elapsed := time.Since(startTime).Milliseconds()
 		fmt.Printf("RESULT|%s|ABANDON|%d|%dms\n", destAddr, maxRetries, elapsed)
 		return
 	}
 
 	if currentTry > 0 {
-		fmt.Printf("Retry %d/%d pour %s\n", currentTry, maxRetries, destAddr)
+		slog.Info("retrying", "dest", destAddr, "try", currentTry, "max", maxRetries)
 	}
 
 	listStr, err := node.GetNodesList()
 	if err != nil {
-		fmt.Println("Erreur récupération liste:", err)
+		slog.Error("get nodes list", "err", err)
 		return
 	}
 	if listStr == "LIST:empty" {
-		fmt.Println("Aucun node disponible sur le réseau")
+		slog.Warn("no nodes available")
 		return
 	}
 
@@ -65,7 +66,7 @@ func SendWithRetry(
 		numRelays = len(candidates)
 	}
 	if numRelays == 0 {
-		fmt.Println("Pas assez de nodes pour construire une route (besoin d'au moins 1 relais)")
+		slog.Warn("not enough relay nodes")
 		return
 	}
 
@@ -76,18 +77,18 @@ func SendWithRetry(
 
 	relays := candidates[:numRelays]
 	route := append(relays, destAddr)
-	fmt.Printf("Route forward : %v\n", route)
+	slog.Debug("route built", "forward", route)
 
 	var returnRoute []string
 	for i := len(relays) - 1; i >= 0; i-- {
 		returnRoute = append(returnRoute, relays[i])
 	}
 	returnRoute = append(returnRoute, nodeAddr)
-	fmt.Printf("Route retour:  %v\n", returnRoute)
+	slog.Debug("route built", "return", returnRoute)
 
 	onion, msgID, firstNackID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr, nodeAddr)
 	if err != nil {
-		fmt.Println("Erreur encapsulation:", err)
+		slog.Error("encapsulation failed", "err", err)
 		return
 	}
 
@@ -109,7 +110,7 @@ func SendWithRetry(
 
 	err = node.SendTo(route[0], onion)
 	if err != nil {
-		fmt.Println("Erreur envoi:", err)
+		slog.Error("send failed", "err", err)
 		node.Mu.Lock()
 		delete(node.PendingACKs, msgID)
 		delete(node.PendingACKs, firstNackID)
@@ -118,18 +119,18 @@ func SendWithRetry(
 		return
 	}
 
-	fmt.Printf("Message envoyé (msgID: %s), attente ACK...\n\n", msgID)
+	slog.Info("message sent, waiting ACK", "msgID", msgID)
 
 	go func(id string, nackID string, ch chan bool) {
 		select {
 		case success := <-ch:
 			elapsed := time.Since(startTime).Milliseconds()
 			if success {
-				fmt.Printf("ACK confirmé pour %s\n\n", id)
+				slog.Info("ACK received", "msgID", id)
 				fmt.Printf("RESULT|%s|ACK|%d|%dms\n", destAddr, currentTry, elapsed)
 				Telemetry(destAddr, nodeAddr, "ACK", "", exid, 1)
 			} else {
-				fmt.Printf("NACK reçu pour %s — retry...\n\n", msgID)
+				slog.Warn("NACK received, retrying", "msgID", msgID)
 				Telemetry(route[0], nodeAddr, "NACK", "", exid, 1)
 				node.Mu.Lock()
 				delete(node.PendingACKs, msgID)
@@ -140,7 +141,7 @@ func SendWithRetry(
 		case <-time.After(time.Second * 8):
 			elapsed := time.Since(startTime).Milliseconds()
 			fmt.Printf("RESULT|%s|TIMEOUT|%d|%dms\n", destAddr, currentTry, elapsed)
-			fmt.Printf("Timeout du ACK pour %s\n\n", id)
+			slog.Warn("ACK timeout", "msgID", id)
 			Telemetry(route[0], nodeAddr, "NACK", "timeout", exid, 1)
 			node.Mu.Lock()
 			delete(node.PendingACKs, id)
