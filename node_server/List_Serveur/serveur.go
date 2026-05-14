@@ -300,7 +300,7 @@ func TestPing() {
 		}
 
 		for _, node := range nodes {
-			addr := fmt.Sprintf("%s:%d", node.Ip, node.Port)
+			addr := net.JoinHostPort(node.Ip, strconv.Itoa(node.Port))
 			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 			if err != nil {
 				err := data.RemoveNode(node.Name)
