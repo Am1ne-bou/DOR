@@ -82,5 +82,20 @@ func TestStringToOnionLayer_PipeInMessage(t *testing.T) {
 }
 
 // TODO: add integration test for full onion route (3 nodes end-to-end, send + ACK received)
-// TODO: add fuzz test on StringToOnionLayer -- go test -fuzz=FuzzStringToOnionLayer
 // TODO: add benchmark for AES enc/dec and RSA enc/dec -- go test -bench=. and publish results in README
+
+func FuzzStringToOnionLayer(f *testing.F) {
+	f.Add("RELAY|msg-123|192.168.1.1:80|192.168.1.2:80|datadata|hello")
+	f.Add("FINAL|msg-456||192.168.1.2:80||hello world")
+	f.Add("ACK|msg-789||||")
+	f.Add("")
+	f.Add("|||||||")
+	f.Fuzz(func(t *testing.T, s string) {
+		ol, err := StringToOnionLayer(s)
+		if err != nil {
+			return
+		}
+		// round-trip must not panic
+		_ = ol.OnionlayerToString()
+	})
+}

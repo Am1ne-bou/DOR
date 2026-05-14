@@ -12,6 +12,7 @@ import (
 	"encoding/base64" //Ce package va servir a stoker les clés (pour faire la diff entre \n et un octet qui prendrais la valeur associé à \n, idem pour ":")
 	"fmt"
 	"io"
+	"log/slog"
 	mrand "math/rand"
 	"net"
 	"os"
@@ -109,7 +110,7 @@ func DecryptAES(key []byte, ciphertext []byte) ([]byte, error) {
 }
 
 func (n *Node) StartNode() {
-	fmt.Printf("[%s] Started in port : %d\n", n.ID, n.Port)
+	slog.Info("node started", "id", n.ID, "port", n.Port)
 	for {
 		conn, err := n.Listener.Accept()
 		if err != nil {
@@ -168,7 +169,7 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	// NACK:msgid
 	if strings.HasPrefix(line, "NACK:") {
 		msgId := line[len("NACK:"):]
-		fmt.Printf("[%s] NACK received for %s\n", n.ID, msgId)
+		slog.Info("NACK received", "id", n.ID, "msgID", msgId)
 
 		n.Mu.Lock()
 		//if its the sender
@@ -182,7 +183,7 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		delete(n.PendingRelays, msgId)
 		n.Mu.Unlock()
 		if exists {
-			fmt.Printf("[%s] Propagating NACK for %s to %s\n", n.ID, msgId, Nack.PrevNodeAddr)
+			slog.Info("propagating NACK", "id", n.ID, "msgID", msgId, "to", Nack.PrevNodeAddr)
 			for _, fromAddr := range ParseAddresses(Nack.PrevNodeAddr) {
 				if n.SendTo(fromAddr, fmt.Sprintf("NACK:%s", Nack.PrevNackID)) == nil {
 					break
@@ -196,27 +197,23 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	decrypted, err := BroadcastDecrypt(line, n.PrivateKey)
 	n.KeyMu.RUnlock()
 	if err != nil {
-		fmt.Printf("[%s] Decryption failed: %s\n", n.ID, err)
+		slog.Error("decryption failed", "id", n.ID, "err", err)
 		return
 	}
 
 	// onion layer
 	layer, err := StringToOnionLayer(string(decrypted))
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("parse onion layer", "id", n.ID, "err", err)
 		return
 	}
 	switch layer.Type {
 	case "RELAY":
-		fmt.Printf("[%s] Received relay layer - Next from layer: '%s'\n", n.ID, layer.Next)
-		fmt.Printf("[%s] Full layer content: Type=%s, MsgID=%s, Next=%s, From=%s \n",
-			n.ID, layer.Type, layer.MsgID, layer.Next, layer.From)
-		//node relay
-		fmt.Printf("[%s] Relai vers %s\n", n.ID, layer.Next)
+		slog.Debug("relay layer", "id", n.ID, "msgID", layer.MsgID, "next", layer.Next, "from", layer.From)
 
 		// Check if the address includes a port
 		if !strings.Contains(layer.Next, ":") {
-			fmt.Printf("[%s] Erreur: Adresse sans port: %s\n", n.ID, layer.Next)
+			slog.Error("address missing port", "id", n.ID, "next", layer.Next)
 			return
 		}
 		parts := strings.SplitN(layer.MsgID, ":", 2)
@@ -242,10 +239,10 @@ func (n *Node) handlerroutine(conn net.Conn) {
 				sent = true
 				break
 			}
-			fmt.Printf("[%s] Candidat %s injoignable\n", n.ID, addr)
+			slog.Warn("candidate unreachable", "id", n.ID, "addr", addr)
 		}
 		if !sent {
-			fmt.Printf("[%s] Tout le groupe Next offline, NACK\n", n.ID)
+			slog.Warn("all next hops offline, sending NACK", "id", n.ID, "msgID", layer.MsgID)
 			// nobody will send toreceive back to us; clean up to avoid leak
 			n.Mu.Lock()
 			delete(n.PendingRelays, toreceive)
@@ -259,9 +256,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 
 	case "FINAL":
 		//node final the destination
-		fmt.Printf("[%s] Message recu (MsgID : %s): \"%s\"\n", n.ID, layer.MsgID, layer.Message)
+		slog.Info("message received", "id", n.ID, "msgID", layer.MsgID, "msg", layer.Message)
 		if layer.Next != "" && layer.Data != "" {
-			fmt.Printf("[%s] Envoi ACK pour %s via %s\n", n.ID, layer.MsgID, layer.Next)
+			slog.Info("sending ACK", "id", n.ID, "msgID", layer.MsgID, "via", layer.Next)
 			nextAddrs := ParseAddresses(layer.Next)
 			mrand.Shuffle(len(nextAddrs), func(i, j int) {
 				nextAddrs[i], nextAddrs[j] = nextAddrs[j], nextAddrs[i]
@@ -290,7 +287,7 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		}
 		n.Mu.Unlock()
 	default:
-		fmt.Printf("[%s] Type inconnue: %s\n", n.ID, layer.Type)
+		slog.Warn("unknown layer type", "id", n.ID, "type", layer.Type)
 
 	}
 }
@@ -326,7 +323,7 @@ func (n *Node) Stop() {
 	}
 
 	n.Listener.Close()
-	fmt.Printf("[%s] Node stopped\n", n.ID)
+	slog.Info("node stopped", "id", n.ID)
 
 }
 
@@ -370,7 +367,7 @@ func (n *Node) JoinServerList(addrlist string, sa int, sn int) error {
 		if len(ackParts) >= 3 {
 			n.NodeIP = ackParts[2]
 		}
-		fmt.Printf("[%s] Registered to directory server (IP: %s)\n", n.ID, n.NodeIP)
+		slog.Info("registered", "id", n.ID, "ip", n.NodeIP)
 		return nil
 	}
 
@@ -407,6 +404,6 @@ func (n *Node) RegenerateKeys() error {
 		return fmt.Errorf("erreur d'envoi à l'annuaire: %v", err)
 	}
 
-	fmt.Printf("[%s] Clé RSA régénérée et envoyée à l'annuaire.\n", n.ID)
+	slog.Info("RSA key rotated", "id", n.ID)
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -24,7 +25,7 @@ func main() {
 	//chargement du certificat
 	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
-		fmt.Println("Erreur chargement certificat:", err)
+		slog.Error("load certificate", "err", err)
 		return
 	}
 	config := &tls.Config{Certificates: []tls.Certificate{cert}}
@@ -32,7 +33,7 @@ func main() {
 	//écoute en tls
 	listener, err := tls.Listen("tcp4", "0.0.0.0:8080", config)
 	if err != nil {
-		fmt.Println("Error listen:", err)
+		slog.Error("listen failed", "err", err)
 		return
 	}
 
@@ -46,7 +47,7 @@ func main() {
 	// Initialize the database
 	err = data.Connect("dor_nodes.db") // Open the database
 	if err != nil {
-		fmt.Println("Error connecting:", err)
+		slog.Error("db connect", "err", err)
 		return
 	}
 
@@ -54,17 +55,17 @@ func main() {
 
 	err = data.InitTable() // Initialize the nodes table if not exists
 	if err != nil {
-		fmt.Println("Error initializing table:", err)
+		slog.Error("init table", "err", err)
 		return
 	}
 
 	err = data.ClearTable() // Clear existing nodes on startup
 	if err != nil {
-		fmt.Println("Error clearing table:", err)
+		slog.Error("clear table", "err", err)
 		return
 	}
 
-	fmt.Println("Directory Server on port 8080")
+	slog.Info("directory server started", "port", 8080)
 	fmt.Println("\nCommandes disponibles:")
 	fmt.Println("  LIST - Afficher les noeuds connectés")
 	fmt.Println("  QUIT - Arrêter le serveur")
@@ -154,11 +155,11 @@ func handleConnection(conn net.Conn) {
 		// Ajout dans BDD
 		err = data.AddNode(&info)
 		if err != nil {
-			fmt.Println("Error adding node:", err)
+			slog.Error("add node", "name", name, "err", err)
 			return
 		}
 
-		fmt.Printf("[+] Node %s registered (Port: %d, Sa: %d, Sn: %d)\n", name, port, sa, sn)
+		slog.Info("node registered", "name", name, "port", port, "sa", sa, "sn", sn)
 		_, err = conn.Write([]byte("INIT_ACK:" + name + ":" + host + "\n"))
 		if err != nil {
 			return
@@ -178,9 +179,9 @@ func handleConnection(conn net.Conn) {
 
 		err := data.UpdateNodeKey(id, key)
 		if err != nil {
-			fmt.Println("Error updating node key:", err)
+			slog.Error("update key", "id", id, "err", err)
 		} else {
-			fmt.Printf("[+] Node %s key updated\n", id)
+			slog.Info("key updated", "id", id)
 		}
 
 	case "GET_LIST":
@@ -235,10 +236,11 @@ func handleConnection(conn net.Conn) {
 
 		err := data.RemoveNode(id)
 		if err != nil {
+			slog.Error("remove node", "id", id, "err", err)
 			return
 		}
 
-		fmt.Printf("[-] Node %s unregistered\n", id)
+		slog.Info("node unregistered", "id", id)
 
 	default:
 		_, err := conn.Write([]byte("ERROR:Unknown command\n"))
@@ -295,7 +297,7 @@ func TestPing() {
 	for range ticker.C {
 		nodes, err := data.GetNodesList(MaxSampleNodes)
 		if err != nil {
-			fmt.Println("Error:", err)
+			slog.Error("TestPing get nodes", "err", err)
 			continue
 		}
 
@@ -303,17 +305,26 @@ func TestPing() {
 			addr := net.JoinHostPort(node.Ip, strconv.Itoa(node.Port))
 			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 			if err != nil {
-				err := data.RemoveNode(node.Name)
-				if err != nil {
-					fmt.Println("Error removing node:", err)
-					continue
+				newScore := node.AvailabilityScore / 2
+				if newScore < 5 {
+					if err := data.RemoveNode(node.Name); err != nil {
+						slog.Error("evict node", "name", node.Name, "err", err)
+						continue
+					}
+					slog.Info("node evicted", "name", node.Name)
+				} else {
+					if err := data.UpdateAvailabilityScore(node.Name, newScore); err != nil {
+						slog.Error("update score", "name", node.Name, "err", err)
+					}
+					slog.Info("node degraded", "name", node.Name, "score", node.AvailabilityScore, "new", newScore)
 				}
-				fmt.Printf("Node %s removed\n", node.Name)
 			} else {
-				err := conn.Close()
-				if err != nil {
-					fmt.Println("Error closing connection:", err)
-					continue //un return ici kill la go routine
+				conn.Close()
+				if node.AvailabilityScore < 100 {
+					newScore := min(node.AvailabilityScore+5, 100)
+					if err := data.UpdateAvailabilityScore(node.Name, newScore); err != nil {
+						slog.Error("update score", "name", node.Name, "err", err)
+					}
 				}
 			}
 		}
