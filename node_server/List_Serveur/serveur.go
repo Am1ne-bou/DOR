@@ -306,7 +306,7 @@ func TestPing() {
 				err := data.RemoveNode(node.Name)
 				if err != nil {
 					fmt.Println("Error removing node:", err)
-					return
+					continue
 				}
 				fmt.Printf("Node %s removed\n", node.Name)
 			} else {
