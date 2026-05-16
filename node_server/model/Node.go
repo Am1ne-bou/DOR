@@ -64,6 +64,8 @@ type Node struct {
 	FragMu        sync.Mutex                // protège FragBuf et FragTotal
 	SeenMsgs      map[string]time.Time      // msgID -> first seen; evicted after 30s
 	SeenMu        sync.Mutex               // protects SeenMsgs
+	ReceivedMsgs  []string                 // messages delivered to this node (single + reassembled)
+	ReceivedMu    sync.Mutex
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -330,11 +332,17 @@ func (n *Node) handlerroutine(conn net.Conn) {
 				delete(n.FragTotal, fragID)
 				n.FragMu.Unlock()
 				slog.Info("message reassembled", "id", n.ID, "fragID", fragID, "chunks", total, "msg", assembled)
+				n.ReceivedMu.Lock()
+				n.ReceivedMsgs = append(n.ReceivedMsgs, assembled)
+				n.ReceivedMu.Unlock()
 			} else {
 				n.FragMu.Unlock()
 			}
 		} else {
 			slog.Info("message received", "id", n.ID, "msgID", layer.MsgID, "msg", layer.Message)
+			n.ReceivedMu.Lock()
+			n.ReceivedMsgs = append(n.ReceivedMsgs, layer.Message)
+			n.ReceivedMu.Unlock()
 		}
 		if layer.Next != "" && layer.Data != "" {
 			slog.Info("sending ACK", "id", n.ID, "msgID", layer.MsgID, "via", layer.Next)
