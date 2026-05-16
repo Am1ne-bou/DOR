@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// TODO: add TTL field to prevent infinite relay loops if a node routes back to itself
 type OnionLayer struct {
 	Type    string // RELAY, FINAL, ACK
 	MsgID   string

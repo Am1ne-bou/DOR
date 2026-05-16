@@ -62,6 +62,8 @@ type Node struct {
 	FragBuf       map[string]map[int]string // fragID -> {chunkIndex -> chunk}
 	FragTotal     map[string]int            // fragID -> expected total chunk count
 	FragMu        sync.Mutex                // protège FragBuf et FragTotal
+	SeenMsgs      map[string]time.Time      // msgID -> first seen; evicted after 30s
+	SeenMu        sync.Mutex               // protects SeenMsgs
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -112,8 +114,35 @@ func DecryptAES(key []byte, ciphertext []byte) ([]byte, error) {
 	return plaintext, err
 }
 
+// seenMsg returns true if msgID was already processed (loop or replay), marks it if not
+func (n *Node) seenMsg(msgID string) bool {
+	n.SeenMu.Lock()
+	defer n.SeenMu.Unlock()
+	if n.SeenMsgs == nil {
+		n.SeenMsgs = make(map[string]time.Time)
+	}
+	if _, seen := n.SeenMsgs[msgID]; seen {
+		return true
+	}
+	n.SeenMsgs[msgID] = time.Now()
+	return false
+}
+
 func (n *Node) StartNode() {
 	slog.Info("node started", "id", n.ID, "port", n.Port)
+	// evict seen MsgIDs older than 30s to prevent unbounded growth
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			n.SeenMu.Lock()
+			for id, t := range n.SeenMsgs {
+				if time.Since(t) > 30*time.Second {
+					delete(n.SeenMsgs, id)
+				}
+			}
+			n.SeenMu.Unlock()
+		}
+	}()
 	for {
 		conn, err := n.Listener.Accept()
 		if err != nil {
@@ -216,6 +245,13 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	if err != nil {
 		slog.Error("parse onion layer", "id", n.ID, "err", err)
 		return
+	}
+	// drop loops and replays -- NACK/ACK excluded (they must propagate freely)
+	if layer.Type == "RELAY" || layer.Type == "FINAL" {
+		if n.seenMsg(layer.MsgID) {
+			slog.Warn("duplicate MsgID dropped", "id", n.ID, "msgID", layer.MsgID, "type", layer.Type)
+			return
+		}
 	}
 	switch layer.Type {
 	case "RELAY":
