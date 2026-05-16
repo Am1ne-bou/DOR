@@ -36,7 +36,7 @@ func TestOnionlayerToString(t *testing.T) {
 		Message: "Decrypted message",
 	}
 
-	expected := "FINAL|msg-456||192.168.1.2:80||Decrypted message"
+	expected := "FINAL|msg-456||192.168.1.2:80|||Decrypted message"
 	if out := ol.OnionlayerToString(); out != expected {
 		t.Errorf("Expected %s, got %s", expected, out)
 	}
@@ -71,7 +71,7 @@ func TestGenerateMsgID_Uniqueness(t *testing.T) {
 
 func TestStringToOnionLayer_PipeInMessage(t *testing.T) {
 	// SplitN(6) leaves everything after the 5th pipe in parts[5]
-	str := "FINAL|msg-1|next|from|data|hello|world|pipe"
+	str := "FINAL|msg-1|next|from|data||hello|world|pipe" // empty Frag, Message contains pipes
 	ol, err := StringToOnionLayer(str)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

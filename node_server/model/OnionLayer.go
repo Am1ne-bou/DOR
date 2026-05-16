@@ -14,27 +14,33 @@ type OnionLayer struct {
 	Next    string // RELAY  FINAL
 	From    string // RELAY
 	Data    string // RELAY  FINAL
+	Frag    string // "fragID:i/n", empty for non-fragmented
 	Message string // FINAL seulement
 }
 
-// TODO: add message fragmentation -- RSA-OAEP(2048) caps plaintext at ~214 bytes, large messages silently fail
 func (layer OnionLayer) OnionlayerToString() string {
-	str := fmt.Sprintf("%s|%s|%s|%s|%s|%s", layer.Type, layer.MsgID, layer.Next, layer.From, layer.Data, layer.Message)
+	str := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", layer.Type, layer.MsgID, layer.Next, layer.From, layer.Data, layer.Frag, layer.Message)
 	return str
 }
 
 func StringToOnionLayer(str string) (OnionLayer, error) {
-	parts := strings.SplitN(str, "|", 6)
-	if len(parts) != 6 {
+	// 6-field: old wire format (no Frag); 7-field: new format -- both accepted
+	parts := strings.SplitN(str, "|", 7)
+	if len(parts) < 6 {
 		return OnionLayer{}, fmt.Errorf("OnionLayer StringToOnionLayer Error Split")
 	}
 	ol := OnionLayer{
-		Type:    parts[0],
-		MsgID:   parts[1],
-		Next:    parts[2],
-		From:    parts[3],
-		Data:    parts[4],
-		Message: parts[5],
+		Type:  parts[0],
+		MsgID: parts[1],
+		Next:  parts[2],
+		From:  parts[3],
+		Data:  parts[4],
+	}
+	if len(parts) == 7 {
+		ol.Frag = parts[5]
+		ol.Message = parts[6]
+	} else {
+		ol.Message = parts[5] // backward compat: pre-fragmentation messages
 	}
 	return ol, nil
 }

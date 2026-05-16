@@ -172,7 +172,7 @@ func processCmd(input, mode string, n *model.Node, keys *KeyCache, srvAddr strin
 		if mode == "auth" {
 			msg = "AUTH:" + n.ID + ":" + msg
 		}
-		onion, _, _, err := Encapsulator_func(msg, []string{dstAddr}, nil, keys, srvAddr, nodeAddr)
+		onion, _, _, err := Encapsulator_func(msg, "", []string{dstAddr}, nil, keys, srvAddr, nodeAddr)
 		if err != nil {
 			fmt.Println("Erreur Encapsulator_func:", err)
 			return
@@ -196,7 +196,7 @@ func processCmd(input, mode string, n *model.Node, keys *KeyCache, srvAddr strin
 		for _, addr := range addrsStr {
 			route = append(route, strings.TrimSpace(addr))
 		}
-		onion, _, _, err := Encapsulator_func(message, route, nil, keys, srvAddr, nodeAddr)
+		onion, _, _, err := Encapsulator_func(message, "", route, nil, keys, srvAddr, nodeAddr)
 		if err != nil {
 			fmt.Println("Erreur Encapsulator_func:", err)
 			return
@@ -222,7 +222,7 @@ func processCmd(input, mode string, n *model.Node, keys *KeyCache, srvAddr strin
 		if mode == "auth" {
 			message = "AUTH:" + n.ID + ":" + message
 		}
-		go SendWithRetry(n, srvAddr, destAddr, message, numRelays, keys, 3, 0, time.Now())
+		go SendWithRetry(n, srvAddr, destAddr, message, "", numRelays, keys, 3, 0, time.Now())
 
 	case "SSEND":
 		// SSEND:<group_size>:<nbr_relays>:<ip>:<port>:<message>
@@ -253,7 +253,7 @@ func processCmd(input, mode string, n *model.Node, keys *KeyCache, srvAddr strin
 		destAddr := subParts[3] + ":" + subParts[4]
 		for i := 0; i < nbrMsg; i++ {
 			msg := fmt.Sprintf("bench-msg-%d", i)
-			go SendWithRetry(n, srvAddr, destAddr, msg, numRelays, keys, maxRetries, 0, time.Now())
+			go SendWithRetry(n, srvAddr, destAddr, msg, "", numRelays, keys, maxRetries, 0, time.Now())
 			time.Sleep(500 * time.Millisecond)
 		}
 

@@ -15,6 +15,23 @@ import (
 	"project/node_server/model"
 )
 
+// fragChunkSize: large enough for typical messages, small enough to cap per-hop TCP writes
+const fragChunkSize = 4096
+
+// splitMessage splits msg into fixed-size byte chunks for fragmented sending
+func splitMessage(msg string, size int) []string {
+	var chunks []string
+	for len(msg) > 0 {
+		if len(msg) <= size {
+			chunks = append(chunks, msg)
+			break
+		}
+		chunks = append(chunks, msg[:size])
+		msg = msg[size:]
+	}
+	return chunks
+}
+
 func runCLI(node *model.Node, serverAddr string, publicKeys *KeyCache) {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("  FETCH:<ip>:<port>                              - Récupérer la clé publique d'un noeud")
@@ -79,7 +96,7 @@ func runCLI(node *model.Node, serverAddr string, publicKeys *KeyCache) {
 			dstAddr := subParts[0] + ":" + subParts[1]
 			msg := subParts[2]
 			nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
-			onion, _, _, err := Encapsulator_func(msg, []string{dstAddr}, nil, publicKeys, serverAddr, nodeAddr)
+			onion, _, _, err := Encapsulator_func(msg, "", []string{dstAddr}, nil, publicKeys, serverAddr, nodeAddr)
 			if err != nil {
 				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
@@ -102,7 +119,7 @@ func runCLI(node *model.Node, serverAddr string, publicKeys *KeyCache) {
 				route = append(route, strings.TrimSpace(addr))
 			}
 			nodeAddr := fmt.Sprintf("%s:%d", node.NodeIP, node.Port)
-			onion, _, _, err := Encapsulator_func(message, route, nil, publicKeys, serverAddr, nodeAddr)
+			onion, _, _, err := Encapsulator_func(message, "", route, nil, publicKeys, serverAddr, nodeAddr)
 			if err != nil {
 				fmt.Println("Erreur Encapsulator_func:", err)
 				continue
@@ -125,7 +142,17 @@ func runCLI(node *model.Node, serverAddr string, publicKeys *KeyCache) {
 			}
 			destAddr := subParts[1] + ":" + subParts[2]
 			message := subParts[3]
-			go SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, 3, 0, time.Now())
+			// fragment large messages; each chunk is sent as an independent onion
+			if len(message) <= fragChunkSize {
+				go SendWithRetry(node, serverAddr, destAddr, message, "", numRelays, publicKeys, 3, 0, time.Now())
+			} else {
+				fragID := model.GenerateMsgID("frag")
+				chunks := splitMessage(message, fragChunkSize)
+				for i, chunk := range chunks {
+					frag := fmt.Sprintf("%s:%d/%d", fragID, i+1, len(chunks))
+					go SendWithRetry(node, serverAddr, destAddr, chunk, frag, numRelays, publicKeys, 3, 0, time.Now())
+				}
+			}
 
 		case "BENCH":
 			subParts := strings.SplitN(data, ":", 5)
@@ -139,7 +166,7 @@ func runCLI(node *model.Node, serverAddr string, publicKeys *KeyCache) {
 			destAddr := subParts[3] + ":" + subParts[4]
 			for i := 0; i < nbrMsg; i++ {
 				msg := fmt.Sprintf("bench-msg-%d", i)
-				go SendWithRetry(node, serverAddr, destAddr, msg, numRelays, publicKeys, maxRetries, 0, time.Now())
+				go SendWithRetry(node, serverAddr, destAddr, msg, "", numRelays, publicKeys, maxRetries, 0, time.Now())
 				time.Sleep(500 * time.Millisecond)
 			}
 

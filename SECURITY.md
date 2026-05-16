@@ -29,7 +29,7 @@ DOR is a proof-of-concept onion routing system built for academic purposes. The 
 - The web UI (`ENABLE_WEB=1`) binds on `127.0.0.1:9090` with no authentication. Do not expose externally.
 - No forward secrecy -- RSA keypairs are long-lived. Compromise of a node key exposes all past sessions.
 - No replay protection -- onion layers carry no timestamp or nonce. A captured ciphertext can be replayed.
-- RSA-OAEP with 2048-bit key caps plaintext at ~190 bytes. Large payloads require chunking (not yet implemented).
+- No message fragmentation -- large payloads expose message size as a traffic fingerprint to intermediate relays. Chunking with fixed-size blocks and reassembly at the final node is not yet implemented.
 - AUTH mode (`SEND` with auth prefix) is display-only -- sender ID is not signed and can be forged.
 - No rate limiting on the directory server -- a client can spam INIT registrations.
 

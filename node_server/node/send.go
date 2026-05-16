@@ -16,6 +16,7 @@ func SendWithRetry(
 	serverAddr string,
 	destAddr string,
 	message string,
+	frag string,
 	numRelays int,
 	publicKeys *KeyCache,
 	maxRetries int,
@@ -86,7 +87,7 @@ func SendWithRetry(
 	returnRoute = append(returnRoute, nodeAddr)
 	slog.Debug("route built", "return", returnRoute)
 
-	onion, msgID, firstNackID, err := Encapsulator_func(message, route, returnRoute, publicKeys, serverAddr, nodeAddr)
+	onion, msgID, firstNackID, err := Encapsulator_func(message, frag, route, returnRoute, publicKeys, serverAddr, nodeAddr)
 	if err != nil {
 		slog.Error("encapsulation failed", "err", err)
 		return
@@ -115,7 +116,7 @@ func SendWithRetry(
 		delete(node.PendingACKs, msgID)
 		delete(node.PendingACKs, firstNackID)
 		node.Mu.Unlock()
-		SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
+		SendWithRetry(node, serverAddr, destAddr, message, frag, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
 		return
 	}
 
@@ -136,7 +137,7 @@ func SendWithRetry(
 				delete(node.PendingACKs, msgID)
 				delete(node.PendingACKs, firstNackID)
 				node.Mu.Unlock()
-				SendWithRetry(node, serverAddr, destAddr, message, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
+				SendWithRetry(node, serverAddr, destAddr, message, frag, numRelays, publicKeys, maxRetries, currentTry+1, startTime)
 			}
 		case <-time.After(time.Second * 8):
 			elapsed := time.Since(startTime).Milliseconds()

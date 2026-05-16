@@ -29,6 +29,7 @@ func GetScoresFromProfile(profile string) (int, int) {
 
 func Encapsulator_func(
 	message string,
+	frag string,
 	route []string,
 	returnRoute []string,
 	publicKeys *KeyCache,
@@ -77,10 +78,10 @@ func Encapsulator_func(
 	if returnRoute != nil {
 		innerLayer = &model.OnionLayer{
 			Type: "FINAL", MsgID: msgID,
-			Next: firstReturnHop, Data: returnOnion, Message: message,
+			Next: firstReturnHop, Data: returnOnion, Frag: frag, Message: message,
 		}
 	} else {
-		innerLayer = &model.OnionLayer{Type: "FINAL", MsgID: msgID, Message: message}
+		innerLayer = &model.OnionLayer{Type: "FINAL", MsgID: msgID, Frag: frag, Message: message}
 	}
 
 	forwardPayload, err := encryptOnionLayers(innerLayer, route, publicKeys, senderAddr, nackArray)

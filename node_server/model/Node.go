@@ -59,6 +59,9 @@ type Node struct {
 	PendingACKs   map[string]chan bool  // msgID  canal de notification
 	PendingRelays map[string]Nackstruct // recievedNackID  Nackstruct
 	Mu            sync.Mutex            // protège PendingACKs
+	FragBuf       map[string]map[int]string // fragID -> {chunkIndex -> chunk}
+	FragTotal     map[string]int            // fragID -> expected total chunk count
+	FragMu        sync.Mutex                // protège FragBuf et FragTotal
 }
 
 // fonction quasi-reprise de l'exemple : https://pkg.go.dev/crypto/cipher#NewGCM
@@ -263,7 +266,40 @@ func (n *Node) handlerroutine(conn net.Conn) {
 
 	case "FINAL":
 		//node final the destination
-		slog.Info("message received", "id", n.ID, "msgID", layer.MsgID, "msg", layer.Message)
+		if layer.Frag != "" {
+			// buffer this chunk; when all N arrive, assemble in order and deliver
+			fp := strings.SplitN(layer.Frag, ":", 2)
+			fragID := fp[0]
+			in := strings.Split(fp[1], "/")
+			idx, _ := strconv.Atoi(in[0])
+			total, _ := strconv.Atoi(in[1])
+			n.FragMu.Lock()
+			if n.FragBuf == nil {
+				n.FragBuf = make(map[string]map[int]string)
+				n.FragTotal = make(map[string]int)
+			}
+			if n.FragBuf[fragID] == nil {
+				n.FragBuf[fragID] = make(map[int]string)
+				n.FragTotal[fragID] = total
+			}
+			n.FragBuf[fragID][idx] = layer.Message
+			if len(n.FragBuf[fragID]) == n.FragTotal[fragID] {
+				// all chunks arrived: assemble in order and deliver
+				var b strings.Builder
+				for i := 1; i <= total; i++ { // chunks indexed from 1
+					b.WriteString(n.FragBuf[fragID][i])
+				}
+				assembled := b.String()
+				delete(n.FragBuf, fragID)
+				delete(n.FragTotal, fragID)
+				n.FragMu.Unlock()
+				slog.Info("message reassembled", "id", n.ID, "fragID", fragID, "chunks", total, "msg", assembled)
+			} else {
+				n.FragMu.Unlock()
+			}
+		} else {
+			slog.Info("message received", "id", n.ID, "msgID", layer.MsgID, "msg", layer.Message)
+		}
 		if layer.Next != "" && layer.Data != "" {
 			slog.Info("sending ACK", "id", n.ID, "msgID", layer.MsgID, "via", layer.Next)
 			nextAddrs := ParseAddresses(layer.Next)

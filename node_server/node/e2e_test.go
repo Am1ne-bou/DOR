@@ -54,7 +54,7 @@ func TestSendACKRoundtrip(t *testing.T) {
 	route := []string{relay1Addr, relay2Addr, destAddr}
 	returnRoute := []string{relay2Addr, relay1Addr, senderAddr} // reversed for ACK
 
-	onion, msgID, firstNackID, err := Encapsulator_func("hello world", route, returnRoute, keys, "", senderAddr)
+	onion, msgID, firstNackID, err := Encapsulator_func("hello world", "", route, returnRoute, keys, "", senderAddr)
 	if err != nil {
 		t.Fatalf("Encapsulator_func: %v", err)
 	}
