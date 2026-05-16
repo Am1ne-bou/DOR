@@ -23,7 +23,24 @@ type KeyCache struct {
 	m  map[string]CachedKey
 }
 
-func newKeyCache() *KeyCache { return &KeyCache{m: make(map[string]CachedKey)} }
+func newKeyCache() *KeyCache {
+	c := &KeyCache{m: make(map[string]CachedKey)}
+	go c.cleanCache()
+	return c
+}
+
+func (c *KeyCache) cleanCache() { // evicts expired keys every 60s
+	for range time.Tick(60 * time.Second) {
+		now := time.Now()
+		c.mu.Lock()
+		for k, v := range c.m {
+			if now.After(v.ExpiresAt) {
+				delete(c.m, k)
+			}
+		}
+		c.mu.Unlock()
+	}
+}
 
 func (c *KeyCache) get(k string) (CachedKey, bool) {
 	c.mu.RLock()
@@ -45,7 +62,9 @@ func FetchKeyFromServer(addr string, serverAddr string) (*rsa.PublicKey, error) 
 	}
 	defer conn.Close()
 
-	conn.Write([]byte(fmt.Sprintf("GET_KEY:%s\n", addr)))
+	if _, err := conn.Write([]byte(fmt.Sprintf("GET_KEY:%s\n", addr))); err != nil {
+		return nil, err
+	}
 
 	reader := bufio.NewReader(conn)
 	response, err := reader.ReadString('\n')

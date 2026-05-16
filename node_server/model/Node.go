@@ -130,7 +130,9 @@ func (n *Node) GetNodesList() (string, error) {
 	}
 	defer conn.Close()
 
-	conn.Write([]byte("GET_LIST\n"))
+	if _, err := conn.Write([]byte("GET_LIST\n")); err != nil {
+		return "", err
+	}
 
 	reader := bufio.NewReader(conn)
 	response, err := reader.ReadString('\n')
@@ -165,7 +167,9 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		pubBytes, _ := x509.MarshalPKIXPublicKey(n.PublicKey)
 		n.KeyMu.RUnlock()
 		pubBase64 := base64.StdEncoding.EncodeToString(pubBytes)
-		conn.Write([]byte(pubBase64 + "\n"))
+		if _, err := conn.Write([]byte(pubBase64 + "\n")); err != nil {
+			slog.Debug("GET_PUBKEY write", "id", n.ID, "err", err) // requester disconnected, skip
+		}
 		return
 	}
 

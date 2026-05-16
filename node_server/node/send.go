@@ -76,7 +76,7 @@ func SendWithRetry(
 	}
 
 	relays := candidates[:numRelays]
-	route := append(relays, destAddr)
+	route := append(relays[:len(relays):len(relays)], destAddr)
 	slog.Debug("route built", "forward", route)
 
 	var returnRoute []string
