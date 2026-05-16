@@ -22,12 +22,16 @@ DOR is a proof-of-concept onion routing system built for academic purposes. The 
 | AES-256-GCM | Payload encryption per layer |
 | TLS (self-signed) | Node <-> directory server channel |
 
-## Known limitations (intentional for school context)
+## Known limitations
 
-- `InsecureSkipVerify: true` in TLS dial - the cert is pinned via embedded PEM, not verified against a CA. Acceptable for a closed demo network; not for production.
+- `InsecureSkipVerify: true` in TLS dial -- cert is pinned via embedded PEM, not CA-verified. Fine for a closed demo network.
 - The directory server is a single point of failure and trust. No distributed DHT.
-- The web UI (`ENABLE_WEB=1`) binds on `0.0.0.0:9090` with no authentication. Only enable it in a trusted environment.
-- `publicKeys` cache in the node has no mutex - known race under concurrent load.
+- The web UI (`ENABLE_WEB=1`) binds on `127.0.0.1:9090` with no authentication. Do not expose externally.
+- No forward secrecy -- RSA keypairs are long-lived. Compromise of a node key exposes all past sessions.
+- No replay protection -- onion layers carry no timestamp or nonce. A captured ciphertext can be replayed.
+- RSA-OAEP with 2048-bit key caps plaintext at ~190 bytes. Large payloads require chunking (not yet implemented).
+- AUTH mode (`SEND` with auth prefix) is display-only -- sender ID is not signed and can be forged.
+- No rate limiting on the directory server -- a client can spam INIT registrations.
 
 ## Generating a TLS certificate
 

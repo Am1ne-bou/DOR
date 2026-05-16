@@ -111,9 +111,11 @@ The recipient forwards it back without decrypting it -- the sender's address is 
 - NACK cascade cleanup -- `PendingRelays` map leak fixed
 - MsgID space: 10^10 vs original 10^6 (birthday collision threshold ~140k vs ~1k concurrent msgs)
 - Web UI locked to `127.0.0.1` (was `0.0.0.0`)
-- `io.ReadFull` / `conn.Write` error handling pass
+- `conn.Write` checks with early return on network failure (keycache, GetNodesList, GET_PUBKEY handler)
+- `KeyCache.cleanCache()` -- background eviction goroutine, prevents unbounded growth on long-running nodes
 - GitHub Actions CI with race detector
 - Integration tests (SQLite roundtrip) and unit tests (AES, onion parsing, broadcast enc/dec)
+- End-to-end tests: `TestSendACKRoundtrip` + `TestSSendACKRoundtrip` -- in-process, no Docker needed
 
 ---
 
@@ -203,9 +205,8 @@ Types: `RELAY` (forward hop), `FINAL` (destination), `ACK` (return path)
 ## Running tests
 
 ```bash
-cd node_server/model && go test ./...   # AES, onion, broadcast
-cd node_server/data  && go test ./...   # SQLite integration
-go test -race ./...                     # all packages, race detector
+go test -race ./...                                        # all packages, race detector
+go test ./node_server/node/ -run "TestSend|TestSSend" -v  # e2e: full 3-hop onion path, no docker
 ```
 
 ---
@@ -213,3 +214,7 @@ go test -race ./...                     # all packages, race detector
 ## Security
 
 See [SECURITY.md](SECURITY.md) for threat model and known limitations.
+
+---
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for contribution breakdown.
