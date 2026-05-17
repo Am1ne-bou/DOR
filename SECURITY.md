@@ -28,8 +28,8 @@ DOR is a proof-of-concept onion routing system built for academic purposes. The 
 - The directory server is a single point of failure and trust. No distributed DHT.
 - The web UI (`ENABLE_WEB=1`) binds on `127.0.0.1:9090` with no authentication. Do not expose externally.
 - No forward secrecy -- RSA keypairs are long-lived. Compromise of a node key exposes all past sessions.
-- No replay protection -- onion layers carry no timestamp or nonce. A captured ciphertext can be replayed.
-- No message fragmentation -- large payloads expose message size as a traffic fingerprint to intermediate relays. Chunking with fixed-size blocks and reassembly at the final node is not yet implemented.
+- Replay/loop protection is per-node and in-memory only -- a node restart clears the seen-MsgID set, so replays across restarts are not caught.
+- Message fragmentation caps at 4096B per chunk -- each chunk is a separate onion with its own ACK cycle; out-of-order delivery is handled but partial delivery (some chunks lost) leaves a dangling FragBuf entry.
 - AUTH mode (`SEND` with auth prefix) is display-only -- sender ID is not signed and can be forged.
 - No rate limiting on the directory server -- a client can spam INIT registrations.
 

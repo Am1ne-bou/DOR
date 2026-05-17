@@ -105,7 +105,7 @@ The recipient forwards it back without decrypting it -- the sender's address is 
 
 - Full node architecture: goroutine layout, INIT handshake, CLI loop (`Node.go`, `main.go`)
 - ACK/NACK/Retry: `PendingACKs`, `PendingRelays`, `SendWithRetry`, backward NACK propagation
-- Onion layer format: six-field pipe-delimited record, double-onion (forward + embedded return ACK)
+- Onion layer format: seven-field pipe-delimited record, double-onion (forward + embedded return ACK)
 - `BuildSmartClusters` + `BroadcastEncrypt`/`BroadcastDecrypt` (supernode implementation)
 - `KeyCache` with `sync.RWMutex` -- fixed data race on public key map (TTL-based caching)
 - NACK cascade cleanup -- `PendingRelays` map leak fixed
@@ -113,9 +113,11 @@ The recipient forwards it back without decrypting it -- the sender's address is 
 - Web UI locked to `127.0.0.1` (was `0.0.0.0`)
 - `conn.Write` checks with early return on network failure (keycache, GetNodesList, GET_PUBKEY handler)
 - `KeyCache.cleanCache()` -- background eviction goroutine, prevents unbounded growth on long-running nodes
+- Message fragmentation: auto-split at 4096B, each chunk sent as an independent onion, reassembled in order at the FINAL node
+- Replay/loop protection: per-node seen-MsgID set with 30s TTL eviction, duplicate RELAY/FINAL layers dropped
 - GitHub Actions CI with race detector
 - Integration tests (SQLite roundtrip) and unit tests (AES, onion parsing, broadcast enc/dec)
-- End-to-end tests: `TestSendACKRoundtrip` + `TestSSendACKRoundtrip` -- in-process, no Docker needed
+- End-to-end tests: `TestSendACKRoundtrip`, `TestSSendACKRoundtrip`, `TestSendFragmented` -- in-process, no Docker needed
 
 ---
 
@@ -197,8 +199,9 @@ NACK:msgid                      ->  node (failure propagation)
 <encrypted onion>               ->  node (relay or final)
 ```
 
-Layer fields (pipe-separated): `Type | MsgID | Next | From | Data | Message`
+Layer fields (pipe-separated): `Type | MsgID | Next | From | Data | Frag | Message`
 Types: `RELAY` (forward hop), `FINAL` (destination), `ACK` (return path)
+`Frag` format: `fragID:i/n` (chunk index and total), empty for non-fragmented messages
 
 ---
 
@@ -206,7 +209,7 @@ Types: `RELAY` (forward hop), `FINAL` (destination), `ACK` (return path)
 
 ```bash
 go test -race ./...                                        # all packages, race detector
-go test ./node_server/node/ -run "TestSend|TestSSend" -v  # e2e: full 3-hop onion path, no docker
+go test ./node_server/node/ -run "TestSend|TestSSend|TestFrag" -v  # e2e: full 3-hop onion path, no docker
 ```
 
 ---
