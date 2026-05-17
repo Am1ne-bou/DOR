@@ -68,10 +68,18 @@ func runCLI(node *model.Node, serverAddr string, publicKeys *KeyCache) {
 				fmt.Println("Erreur connexion:", err)
 				continue
 			}
-			conn.Write([]byte("GET_PUBKEY\n"))
+			if _, err := conn.Write([]byte("GET_PUBKEY\n")); err != nil {
+				fmt.Println("Erreur FETCH write:", err)
+				conn.Close()
+				continue
+			}
 			reader := bufio.NewReader(conn)
-			pubBase64, _ := reader.ReadString('\n')
+			pubBase64, err := reader.ReadString('\n')
 			conn.Close()
+			if err != nil {
+				fmt.Println("Erreur FETCH read:", err)
+				continue
+			}
 
 			pubBytes, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(pubBase64))
 			pubKeyInterface, err := x509.ParsePKIXPublicKey(pubBytes)

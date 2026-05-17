@@ -116,7 +116,6 @@ func DecryptAES(key []byte, ciphertext []byte) ([]byte, error) {
 	return plaintext, err
 }
 
-// seenMsg returns true if msgID was already processed (loop or replay), marks it if not
 func (n *Node) seenMsg(msgID string) bool {
 	n.SeenMu.Lock()
 	defer n.SeenMu.Unlock()
@@ -132,8 +131,7 @@ func (n *Node) seenMsg(msgID string) bool {
 
 func (n *Node) StartNode() {
 	slog.Info("node started", "id", n.ID, "port", n.Port)
-	// evict seen MsgIDs older than 30s to prevent unbounded growth
-	go func() {
+	go func() { // 30s TTL eviction on SeenMsgs
 		for {
 			time.Sleep(30 * time.Second)
 			n.SeenMu.Lock()
@@ -179,7 +177,6 @@ func (n *Node) GetNodesList() (string, error) {
 
 ////
 
-// TODO: add timestamp+nonce to each onion layer and reject replays within a TTL window
 func (n *Node) handlerroutine(conn net.Conn) {
 	defer conn.Close()
 
@@ -248,8 +245,7 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		slog.Error("parse onion layer", "id", n.ID, "err", err)
 		return
 	}
-	// drop loops and replays -- NACK/ACK excluded (they must propagate freely)
-	if layer.Type == "RELAY" || layer.Type == "FINAL" {
+	if layer.Type == "RELAY" || layer.Type == "FINAL" { // ACK/NACK pass freely
 		if n.seenMsg(layer.MsgID) {
 			slog.Warn("duplicate MsgID dropped", "id", n.ID, "msgID", layer.MsgID, "type", layer.Type)
 			return
@@ -276,7 +272,6 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		n.PendingRelays[toreceive] = Nackstruct{PrevNackID: tosend, PrevNodeAddr: layer.From}
 		n.Mu.Unlock()
 
-		// try each candidate in Next group
 		nextAddrs := ParseAddresses(layer.Next)
 		mrand.Shuffle(len(nextAddrs), func(i, j int) {
 			nextAddrs[i], nextAddrs[j] = nextAddrs[j], nextAddrs[i]
@@ -291,7 +286,6 @@ func (n *Node) handlerroutine(conn net.Conn) {
 		}
 		if !sent {
 			slog.Warn("all next hops offline, sending NACK", "id", n.ID, "msgID", layer.MsgID)
-			// nobody will send toreceive back to us; clean up to avoid leak
 			n.Mu.Lock()
 			delete(n.PendingRelays, toreceive)
 			n.Mu.Unlock()
@@ -305,7 +299,6 @@ func (n *Node) handlerroutine(conn net.Conn) {
 	case "FINAL":
 		//node final the destination
 		if layer.Frag != "" {
-			// buffer this chunk; when all N arrive, assemble in order and deliver
 			fp := strings.SplitN(layer.Frag, ":", 2)
 			fragID := fp[0]
 			in := strings.Split(fp[1], "/")
@@ -322,9 +315,8 @@ func (n *Node) handlerroutine(conn net.Conn) {
 			}
 			n.FragBuf[fragID][idx] = layer.Message
 			if len(n.FragBuf[fragID]) == n.FragTotal[fragID] {
-				// all chunks arrived: assemble in order and deliver
 				var b strings.Builder
-				for i := 1; i <= total; i++ { // chunks indexed from 1
+				for i := 1; i <= total; i++ { // 1-based
 					b.WriteString(n.FragBuf[fragID][i])
 				}
 				assembled := b.String()

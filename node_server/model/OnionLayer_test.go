@@ -81,8 +81,7 @@ func TestStringToOnionLayer_PipeInMessage(t *testing.T) {
 	}
 }
 
-// TODO: add integration test for full onion route (3 nodes end-to-end, send + ACK received)
-// TODO: add benchmark for AES enc/dec and RSA enc/dec -- go test -bench=. and publish results in README
+// TODO: add benchmark for AES enc/dec and RSA enc/dec -- go test -bench=.
 
 func FuzzStringToOnionLayer(f *testing.F) {
 	f.Add("RELAY|msg-123|192.168.1.1:80|192.168.1.2:80|datadata|hello")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -72,7 +73,7 @@ func BuildSmartClusters(nodes []model.NodeInfo, numHops int, blacklist []string)
 
 	for nodeIdx < len(sortedNodes) {
 		targetIdx := 0
-		minScore := 999999.0
+		minScore := math.MaxFloat64
 		for i, s := range clusterScores {
 			if s < minScore {
 				minScore = s

@@ -31,7 +31,7 @@ func makeTestNode(t *testing.T) (*model.Node, string) {
 		PublicKey:     &priv.PublicKey,
 		NodeIP:        "127.0.0.1",
 		Listener:      ln,
-		ServerAddr:    "127.0.0.1:0", // unused, keys pre-cached
+		ServerAddr:    "127.0.0.1:0",
 		PendingACKs:   make(map[string]chan bool),
 		PendingRelays: make(map[string]model.Nackstruct),
 	}
@@ -53,7 +53,7 @@ func TestSendACKRoundtrip(t *testing.T) {
 	}
 
 	route := []string{relay1Addr, relay2Addr, destAddr}
-	returnRoute := []string{relay2Addr, relay1Addr, senderAddr} // reversed for ACK
+	returnRoute := []string{relay2Addr, relay1Addr, senderAddr}
 
 	onion, msgID, firstNackID, err := Encapsulator_func("hello world", "", route, returnRoute, keys, "", senderAddr)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestSendACKRoundtrip(t *testing.T) {
 	ackChan := make(chan bool, 1)
 	sender.Mu.Lock()
 	sender.PendingACKs[msgID] = ackChan
-	sender.PendingACKs[firstNackID] = ackChan // nack hits same chan
+	sender.PendingACKs[firstNackID] = ackChan
 	sender.Mu.Unlock()
 
 	if err := sender.SendTo(relay1Addr, onion); err != nil {
@@ -96,8 +96,7 @@ func TestSendFragmented(t *testing.T) {
 	route := []string{relay1Addr, relay2Addr, destAddr}
 	returnRoute := []string{relay2Addr, relay1Addr, senderAddr}
 
-	// 10KB message -- splits into 3 chunks (4096 + 4096 + 1808 bytes)
-	message := strings.Repeat("Z", 10000)
+	message := strings.Repeat("Z", 10000) // 10KB, 3 chunks
 	fragID := model.GenerateMsgID("frag")
 	chunks := splitMessage(message, fragChunkSize)
 
@@ -128,7 +127,6 @@ func TestSendFragmented(t *testing.T) {
 		}
 	}
 
-	// verify the full message was reassembled correctly at the destination
 	dest.ReceivedMu.Lock()
 	msgs := dest.ReceivedMsgs
 	dest.ReceivedMu.Unlock()
@@ -143,12 +141,12 @@ func TestSSendACKRoundtrip(t *testing.T) {
 	relay2, relay2Addr := makeTestNode(t)
 	dest, destAddr := makeTestNode(t)
 
-	group := func(n *model.Node, addr string) LayerGroup { // single-node cluster
+	group := func(n *model.Node, addr string) LayerGroup {
 		return LayerGroup{Addrs: []string{addr}, PubKeys: []*rsa.PublicKey{n.PublicKey}}
 	}
 
 	route := []LayerGroup{group(relay1, relay1Addr), group(relay2, relay2Addr), group(dest, destAddr)}
-	returnRoute := []LayerGroup{group(relay2, relay2Addr), group(relay1, relay1Addr), group(sender, senderAddr)} // reversed for ACK
+	returnRoute := []LayerGroup{group(relay2, relay2Addr), group(relay1, relay1Addr), group(sender, senderAddr)}
 
 	onion, msgID, firstNackID, err := Encapsulator_func_super("hello world", route, returnRoute, senderAddr)
 	if err != nil {
@@ -158,7 +156,7 @@ func TestSSendACKRoundtrip(t *testing.T) {
 	ackChan := make(chan bool, 1)
 	sender.Mu.Lock()
 	sender.PendingACKs[msgID] = ackChan
-	sender.PendingACKs[firstNackID] = ackChan // nack hits same chan
+	sender.PendingACKs[firstNackID] = ackChan
 	sender.Mu.Unlock()
 
 	if err := sender.SendTo(relay1Addr, onion); err != nil {
